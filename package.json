@@ -1,0 +1,16 @@
+{
+  "name": "snapbug",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.20.0",
+  "scripts": {
+    "dev": "corepack pnpm --filter @snapbug/web dev",
+    "build": "corepack pnpm -r build",
+    "lint": "corepack pnpm -r lint",
+    "typecheck": "corepack pnpm -r typecheck",
+    "sdk:build": "corepack pnpm --filter @snapbug/sdk build"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
