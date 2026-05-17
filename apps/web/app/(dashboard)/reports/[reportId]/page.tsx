@@ -1,19 +1,33 @@
-import { updateReportAction } from "@/app/(dashboard)/actions";
+import { ArtifactUploadModal } from "@/components/dashboard/artifact-upload-modal";
 import { ArtifactViewer } from "@/components/dashboard/artifact-viewer";
-import { Button } from "@/components/ui/button";
+import { MetadataPanel } from "@/components/dashboard/metadata-panel";
+import { ReportStatusForm } from "@/components/dashboard/report-status-form";
 import { Card, CardTitle } from "@/components/ui/card";
-import { Select } from "@/components/ui/fields";
 import { Toast } from "@/components/ui/toast";
 import { createClient } from "@/lib/supabase/server";
+import { Download } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+
+type ArtifactRow = {
+  id: string;
+  kind: string;
+  content_type: string;
+  byte_size: number;
+  created_at: string;
+  display_name: string | null;
+  description: string | null;
+  is_primary: boolean;
+  storage_path: string;
+  signed_url?: string | null;
+};
 
 export default async function ReportPage({
   params,
   searchParams
 }: {
   params: Promise<{ reportId: string }>;
-  searchParams: Promise<{ success?: string }>;
+  searchParams: Promise<{ success?: string; error?: string }>;
 }) {
   const { reportId } = await params;
   const query = await searchParams;
@@ -21,7 +35,9 @@ export default async function ReportPage({
 
   const { data: report } = await supabase
     .from("reports")
-    .select("id, project_id, environment, type, status, priority, title, message, reporter_name, page_url, user_agent, browser, viewport, metadata, origin, created_at")
+    .select(
+      "id, project_id, environment, type, status, priority, title, message, reporter_name, page_url, user_agent, browser, viewport, metadata, origin, created_at"
+    )
     .eq("id", reportId)
     .single();
 
@@ -29,102 +45,173 @@ export default async function ReportPage({
 
   const { data: artifacts } = await supabase
     .from("report_artifacts")
-    .select("id, kind, content_type, byte_size, created_at")
+    .select("id, kind, content_type, byte_size, created_at, display_name, description, is_primary, storage_path")
     .eq("report_id", reportId)
+    .order("is_primary", { ascending: false })
+    .order("position", { ascending: true })
     .order("created_at");
 
+  const artifactRows = await withSignedUrls(supabase, ((artifacts || []) as ArtifactRow[]).sort((a, b) => Number(b.is_primary) - Number(a.is_primary)));
+  const primaryArtifact = artifactRows.find((artifact) => artifact.is_primary) || artifactRows.find((artifact) => artifact.content_type.startsWith("image/"));
+  const secondaryArtifacts = artifactRows.filter((artifact) => artifact.id !== primaryArtifact?.id);
+
   return (
-    <main className="page">
-      <Toast success={query.success} />
-      <div className="page-header">
+    <main className="page dashboard-page">
+      <Toast success={query.success} error={query.error} />
+      <div className="page-header dashboard-header">
         <div>
+          <p className="eyebrow">{report.reporter_name || safeHost(report.page_url)}</p>
           <h1 className="page-title">{report.title || report.message.slice(0, 90)}</h1>
           <p className="page-subtitle">
             <span className={report.environment === "development" ? "badge dev" : "badge prod"}>{report.environment}</span>{" "}
-            <span className="badge">{report.type}</span>
+            <span className={`badge type-${report.type}`}>{report.type}</span>{" "}
+            <span className={`badge priority-${report.priority}`}>{report.priority}</span>
           </p>
         </div>
-        <Link className="button secondary" href={`/projects/${report.project_id}`}>
+        <Link className="button secondary" href={`/projects/${report.project_id}?section=${report.environment}&status=open&sort=newest`}>
           Back to project
         </Link>
       </div>
 
-      <section className="grid two">
-        <Card>
-          <CardTitle>Report</CardTitle>
-          <div className="stack">
-            <p>{report.message}</p>
-            <div className="muted">Reporter: {report.reporter_name || "anonymous"}</div>
-            <div className="muted">Page: {report.page_url}</div>
-            <div className="muted">Origin: {report.origin}</div>
-            <div className="muted">Created: {new Date(report.created_at).toLocaleString()}</div>
-          </div>
-        </Card>
-
-        <Card>
-          <CardTitle>Status</CardTitle>
-          <form className="stack" action={updateReportAction}>
-            <input type="hidden" name="reportId" value={report.id} />
-            <label className="stack">
-              <span className="muted">Status</span>
-              <Select name="status" defaultValue={report.status}>
-                <option value="open">Open</option>
-                <option value="triaged">Triaged</option>
-                <option value="in_progress">In progress</option>
-                <option value="resolved">Resolved</option>
-                <option value="closed">Closed</option>
-              </Select>
-            </label>
-            <label className="stack">
-              <span className="muted">Priority</span>
-              <Select name="priority" defaultValue={report.priority}>
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-                <option value="critical">Critical</option>
-              </Select>
-            </label>
-            <Button>Update</Button>
-          </form>
-        </Card>
-      </section>
-
-      <section className="grid two" style={{ marginTop: 16 }}>
-        <Card>
-          <CardTitle>Metadata</CardTitle>
-          <pre className="code">
-            {JSON.stringify(
-              {
-                browser: report.browser,
-                viewport: report.viewport,
-                metadata: report.metadata,
-                userAgent: report.user_agent
-              },
-              null,
-              2
-            )}
-          </pre>
-        </Card>
-
-        <Card>
-          <CardTitle>Artifacts</CardTitle>
-          <div className="stack">
-            {(artifacts || []).length ? (
-              artifacts?.map((artifact) => (
-                <div className="stack" key={artifact.id}>
-                  <div className="row between">
-                    <strong>{artifact.kind}</strong>
-                    <span className="muted">{Math.round((artifact.byte_size || 0) / 1024)} KB</span>
-                  </div>
-                  <ArtifactViewer artifact={artifact} reportId={report.id} />
+      <section className="report-detail-layout">
+        <div className="stack">
+          <Card>
+            <CardTitle>Report</CardTitle>
+            <div className="report-summary">
+              <p>{report.message}</p>
+              <div className="metadata-grid compact">
+                <div className="metadata-item">
+                  <span>Reporter</span>
+                  <strong title={report.reporter_name || "Anonymous"}>{report.reporter_name || "Anonymous"}</strong>
                 </div>
-              ))
+                <div className="metadata-item">
+                  <span>Page</span>
+                  <strong title={report.page_url}>{report.page_url}</strong>
+                </div>
+                <div className="metadata-item">
+                  <span>Origin</span>
+                  <strong title={report.origin}>{report.origin}</strong>
+                </div>
+                <div className="metadata-item">
+                  <span>Created</span>
+                  <strong>{new Date(report.created_at).toLocaleString()}</strong>
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          <Card>
+            <div className="row between attachments-heading">
+              <div>
+                <CardTitle>Attachments</CardTitle>
+                <p className="muted">Initial screenshot plus supporting files for this report.</p>
+              </div>
+              <ArtifactUploadModal reportId={report.id} />
+            </div>
+
+            {primaryArtifact ? (
+              <div className="primary-attachment">
+                <div className="row between artifact-card-header">
+                  <div>
+                    <strong>{primaryArtifact.display_name || "Initial screenshot"}</strong>
+                    <p className="muted">
+                      {formatBytes(primaryArtifact.byte_size || 0)} - {new Date(primaryArtifact.created_at).toLocaleString()}
+                    </p>
+                  </div>
+                  {primaryArtifact.signed_url ? (
+                    <a className="button secondary" href={primaryArtifact.signed_url} rel="noreferrer" target="_blank">
+                      <Download size={16} />
+                      Download
+                    </a>
+                  ) : null}
+                </div>
+                <ArtifactViewer artifact={toViewerArtifact(primaryArtifact)} initialUrl={primaryArtifact.signed_url} reportId={report.id} />
+              </div>
             ) : (
-              <p className="muted">No artifacts saved.</p>
+              <div className="empty-state">
+                <strong>No primary screenshot.</strong>
+                <p className="muted">Add attachments to include screenshots, notes, JSON, or PDF documentation.</p>
+              </div>
             )}
-          </div>
-        </Card>
+
+            {secondaryArtifacts.length ? (
+              <div className="attachment-list">
+                {secondaryArtifacts.map((artifact) => (
+                  <div className="attachment-list-item" key={artifact.id}>
+                    <div>
+                      <strong>{artifact.display_name || artifact.kind}</strong>
+                      {artifact.description ? <p className="muted">{artifact.description}</p> : null}
+                      <span className="muted">
+                        {artifact.content_type} - {formatBytes(artifact.byte_size || 0)} - {new Date(artifact.created_at).toLocaleString()}
+                      </span>
+                    </div>
+                    {artifact.signed_url ? (
+                      <a className="button secondary" href={artifact.signed_url} rel="noreferrer" target="_blank">
+                        <Download size={16} />
+                        Download
+                      </a>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </Card>
+        </div>
+
+        <aside className="stack">
+          <Card>
+            <CardTitle>Status</CardTitle>
+            <ReportStatusForm priority={report.priority} reportId={report.id} status={report.status} />
+          </Card>
+
+          <Card>
+            <CardTitle>Metadata</CardTitle>
+            <MetadataPanel
+              browser={report.browser}
+              createdAt={report.created_at}
+              metadata={report.metadata}
+              origin={report.origin}
+              pageUrl={report.page_url}
+              userAgent={report.user_agent}
+              viewport={report.viewport}
+            />
+          </Card>
+        </aside>
       </section>
     </main>
   );
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function safeHost(pageUrl: string) {
+  try {
+    return new URL(pageUrl).hostname;
+  } catch {
+    return pageUrl;
+  }
+}
+
+async function withSignedUrls(supabase: Awaited<ReturnType<typeof createClient>>, artifacts: ArtifactRow[]) {
+  if (!artifacts.length) return artifacts;
+
+  return Promise.all(
+    artifacts.map(async (artifact) => {
+      const { data } = await supabase.storage.from("report-artifacts").createSignedUrl(artifact.storage_path, 60 * 10);
+      return { ...artifact, signed_url: data?.signedUrl || null };
+    })
+  );
+}
+
+function toViewerArtifact(artifact: ArtifactRow) {
+  return {
+    id: artifact.id,
+    kind: artifact.kind,
+    content_type: artifact.content_type,
+    display_name: artifact.display_name
+  };
 }

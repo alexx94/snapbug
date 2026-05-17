@@ -10,6 +10,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 type ProjectSection = "development" | "production" | "config";
+type ReportSort = "newest" | "oldest";
 type ReportRow = {
   id: string;
   environment: string;
@@ -22,59 +23,79 @@ type ReportRow = {
   page_url: string;
   created_at: string;
   updated_at: string | null;
+  total_count: number;
 };
+type ReportFilters = {
+  type: string;
+  status: string;
+  dateFrom: string;
+  dateTo: string;
+  sort: ReportSort;
+  limit: number;
+  offset: number;
+};
+
+const DEFAULT_LIMIT = 25;
 
 export default async function ProjectPage({
   params,
   searchParams
 }: {
   params: Promise<{ projectId: string }>;
-  searchParams: Promise<{ section?: string; type?: string; status?: string; success?: string; error?: string }>;
+  searchParams: Promise<{
+    section?: string;
+    type?: string;
+    status?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    sort?: string;
+    offset?: string;
+    success?: string;
+    error?: string;
+  }>;
 }) {
   const { projectId } = await params;
   const query = await searchParams;
   const section = normalizeSection(query.section);
+  const filters = normalizeFilters(query);
   const supabase = await createClient();
 
   const { data: project } = await supabase.from("projects").select("id, name, slug").eq("id", projectId).single();
   if (!project) notFound();
 
-  const [{ data: keys }, { data: origins }, { data: reportStats }] = await Promise.all([
+  const [{ data: keys }, { data: origins }, reportCountsResult] = await Promise.all([
     supabase.from("project_keys").select("id, environment, key_value, key_prefix, enabled, last_used_at").eq("project_id", projectId),
     supabase.from("project_origins").select("id, environment, origin, enabled").eq("project_id", projectId).order("environment"),
-    supabase.from("reports").select("environment, type, status").eq("project_id", projectId)
+    supabase.rpc("get_project_report_counts", { p_project_id: projectId })
   ]);
 
   const reportEnvironment: SnapBugEnvironment = section === "production" ? "production" : "development";
-  const selectedType: string =
-    query.type && SNAPBUG_REPORT_TYPES.includes(query.type as (typeof SNAPBUG_REPORT_TYPES)[number]) ? query.type : "all";
-  const selectedStatus: string =
-    query.status && SNAPBUG_REPORT_STATUSES.includes(query.status as (typeof SNAPBUG_REPORT_STATUSES)[number]) ? query.status : "all";
-
   let reports: ReportRow[] = [];
+  let reportsError = reportCountsResult.error?.message || "";
   if (section !== "config") {
-    let reportQuery = supabase
-      .from("reports")
-      .select("id, environment, type, status, priority, title, message, reporter_name, page_url, created_at, updated_at")
-      .eq("project_id", projectId)
-      .eq("environment", reportEnvironment)
-      .order("created_at", { ascending: false })
-      .limit(150);
-
-    if (selectedType !== "all") reportQuery = reportQuery.eq("type", selectedType);
-    if (selectedStatus !== "all") reportQuery = reportQuery.eq("status", selectedStatus);
-
-    const { data } = await reportQuery;
-    reports = data || [];
+    const { data, error } = await supabase.rpc("get_project_reports", {
+      p_project_id: projectId,
+      p_environment: reportEnvironment,
+      p_status: filters.status === "all" ? null : filters.status,
+      p_type: filters.type === "all" ? null : filters.type,
+      p_date_from: filters.dateFrom ? `${filters.dateFrom}T00:00:00.000Z` : null,
+      p_date_to: filters.dateTo ? nextUtcDate(filters.dateTo) : null,
+      p_sort: filters.sort,
+      p_limit: filters.limit,
+      p_offset: filters.offset
+    });
+    if (error) reportsError = error.message;
+    reports = (data || []) as ReportRow[];
   }
 
-  const counts = buildCounts(reportStats || []);
+  const counts = buildCounts((reportCountsResult.data || []) as Array<{ environment: string; status: string; total: number }>);
 
   return (
-    <main className="page">
+    <main className="page dashboard-page">
       <Toast success={query.success} error={query.error} />
-      <div className="page-header">
+      <div className="page-header dashboard-header">
         <div>
+          <p className="eyebrow">{project.slug}</p>
           <h1 className="page-title">{project.name}</h1>
           <p className="page-subtitle">Reports are split by runtime environment; keys and origins live in config.</p>
         </div>
@@ -83,16 +104,16 @@ export default async function ProjectPage({
         </Link>
       </div>
 
-      <nav className="tabs" aria-label="Project sections">
-        <Link className={section === "development" ? "active" : ""} href={`/projects/${projectId}?section=development`}>
-          Development reports
+      <nav className="tabs dashboard-tabs" aria-label="Project sections">
+        <Link className={section === "development" ? "active" : ""} href={projectSectionHref(projectId, "development")}>
+          Development
           <span>{counts.development.total}</span>
         </Link>
-        <Link className={section === "production" ? "active" : ""} href={`/projects/${projectId}?section=production`}>
-          Production reports
+        <Link className={section === "production" ? "active" : ""} href={projectSectionHref(projectId, "production")}>
+          Production
           <span>{counts.production.total}</span>
         </Link>
-        <Link className={section === "config" ? "active" : ""} href={`/projects/${projectId}?section=config`}>
+        <Link className={section === "config" ? "active" : ""} href={projectSectionHref(projectId, "config")}>
           Config
         </Link>
       </nav>
@@ -104,9 +125,9 @@ export default async function ProjectPage({
           projectId={projectId}
           environment={reportEnvironment}
           reports={reports}
-          selectedType={selectedType}
-          selectedStatus={selectedStatus}
+          filters={filters}
           counts={counts[reportEnvironment]}
+          error={reportsError}
         />
       )}
     </main>
@@ -173,18 +194,21 @@ function ReportsSection({
   projectId,
   environment,
   reports,
-  selectedType,
-  selectedStatus,
-  counts
+  filters,
+  counts,
+  error
 }: {
   projectId: string;
   environment: SnapBugEnvironment;
   reports: ReportRow[];
-  selectedType: string;
-  selectedStatus: string;
+  filters: ReportFilters;
   counts: ReturnType<typeof emptyEnvironmentCounts>;
+  error: string;
 }) {
   const label = environment === "development" ? "Development" : "Production";
+  const totalCount = reports[0]?.total_count || 0;
+  const nextOffset = filters.offset + filters.limit;
+  const previousOffset = Math.max(filters.offset - filters.limit, 0);
 
   return (
     <section className="stack">
@@ -205,11 +229,16 @@ function ReportsSection({
         <div className="row between report-heading">
           <div>
             <CardTitle>{label} reports</CardTitle>
-            <p className="muted">Newest reports are shown first.</p>
+            <p className="muted">
+              Showing {reports.length ? filters.offset + 1 : 0}-{filters.offset + reports.length} of {totalCount} matching reports.
+            </p>
           </div>
-          <form className="filter-bar">
-            <input type="hidden" name="section" value={environment} />
-            <Select name="type" defaultValue={selectedType}>
+        </div>
+        <form className="filter-bar report-filter-grid">
+          <input type="hidden" name="section" value={environment} />
+          <label>
+            <span className="filter-label">Type</span>
+            <Select name="type" defaultValue={filters.type}>
               <option value="all">All types</option>
               {SNAPBUG_REPORT_TYPES.map((type) => (
                 <option value={type} key={type}>
@@ -217,7 +246,10 @@ function ReportsSection({
                 </option>
               ))}
             </Select>
-            <Select name="status" defaultValue={selectedStatus}>
+          </label>
+          <label>
+            <span className="filter-label">Status</span>
+            <Select name="status" defaultValue={filters.status}>
               <option value="all">All statuses</option>
               {SNAPBUG_REPORT_STATUSES.map((status) => (
                 <option value={status} key={status}>
@@ -225,10 +257,49 @@ function ReportsSection({
                 </option>
               ))}
             </Select>
-            <Button variant="secondary">Filter</Button>
-          </form>
+          </label>
+          <label>
+            <span className="filter-label">From</span>
+            <Input name="dateFrom" type="date" defaultValue={filters.dateFrom} />
+          </label>
+          <label>
+            <span className="filter-label">To</span>
+            <Input name="dateTo" type="date" defaultValue={filters.dateTo} />
+          </label>
+          <label>
+            <span className="filter-label">Sort</span>
+            <Select name="sort" defaultValue={filters.sort}>
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+            </Select>
+          </label>
+          <Button variant="secondary">Apply</Button>
+        </form>
+        {error ? (
+          <div className="empty-state error-state">
+            <strong>Reports could not be loaded.</strong>
+            <p>{error}</p>
+          </div>
+        ) : (
+          <ReportTable reports={reports} />
+        )}
+        <div className="pagination-row">
+          <Link
+            aria-disabled={filters.offset === 0}
+            className={`button secondary${filters.offset === 0 ? " disabled" : ""}`}
+            href={reportHref(projectId, environment, filters, previousOffset)}
+          >
+            Previous
+          </Link>
+          <span className="muted">Page {Math.floor(filters.offset / filters.limit) + 1}</span>
+          <Link
+            aria-disabled={nextOffset >= totalCount}
+            className={`button secondary${nextOffset >= totalCount ? " disabled" : ""}`}
+            href={reportHref(projectId, environment, filters, nextOffset)}
+          >
+            Next
+          </Link>
         </div>
-        <ReportTable reports={reports} />
       </Card>
     </section>
   );
@@ -236,55 +307,34 @@ function ReportsSection({
 
 function ReportTable({ reports }: { reports: ReportRow[] }) {
   return (
-    <div className="table-wrap">
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Type</th>
-            <th>Summary</th>
-            <th>Priority</th>
-            <th>Status</th>
-            <th>Created</th>
-          </tr>
-        </thead>
-        <tbody>
-          {reports.length ? (
-            reports.map((report) => (
-              <tr key={report.id}>
-                <td>
-                  <span className={`badge type-${report.type}`}>{report.type}</span>
-                </td>
-                <td>
-                  <Link href={`/reports/${report.id}`}>
-                    <strong>{report.title || report.message.slice(0, 70)}</strong>
-                  </Link>
-                  <div className="muted">{report.reporter_name || safeHost(report.page_url)}</div>
-                </td>
-                <td>
-                  <span className={`badge priority-${report.priority}`}>{report.priority}</span>
-                </td>
-                <td>
-                  <span>{report.status.replace("_", " ")}</span>
-                </td>
-                <td className="muted">
-                  <div>{new Date(report.created_at).toLocaleString()}</div>
-                  {report.updated_at && report.updated_at !== report.created_at && (
-                    <div style={{ fontSize: "0.75rem", opacity: 0.55, marginTop: 2 }}>
-                      ↻ {new Date(report.updated_at).toLocaleString()}
-                    </div>
-                  )}
-                </td>
-              </tr>
-            ))
-          ) : (
-            <tr>
-              <td className="muted" colSpan={5}>
-                No reports match these filters.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+    <div className="report-list">
+      {reports.length ? (
+        reports.map((report) => (
+          <Link className="report-row-card" href={`/reports/${report.id}`} key={report.id}>
+            <div className="report-row-main">
+              <div className="row report-row-badges">
+                <span className={`badge type-${report.type}`}>{report.type}</span>
+                <span className={`badge priority-${report.priority}`}>{report.priority}</span>
+              </div>
+              <strong>{report.title || report.message.slice(0, 80)}</strong>
+              <p className="muted">{report.message}</p>
+              <span className="muted">{report.reporter_name || safeHost(report.page_url)}</span>
+            </div>
+            <div className="report-row-meta">
+              <span>{report.status.replace("_", " ")}</span>
+              <span className="muted">{new Date(report.created_at).toLocaleString()}</span>
+              {report.updated_at && report.updated_at !== report.created_at ? (
+                <span className="muted">Updated {new Date(report.updated_at).toLocaleString()}</span>
+              ) : null}
+            </div>
+          </Link>
+        ))
+      ) : (
+        <div className="empty-state">
+          <strong>No reports match these filters.</strong>
+          <p className="muted">Try another status, type, or date range.</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -294,6 +344,36 @@ function normalizeSection(section?: string): ProjectSection {
   return "development";
 }
 
+function normalizeFilters(query: { type?: string; status?: string; dateFrom?: string; dateTo?: string; sort?: string; offset?: string }): ReportFilters {
+  const type = query.type && SNAPBUG_REPORT_TYPES.includes(query.type as (typeof SNAPBUG_REPORT_TYPES)[number]) ? query.type : "all";
+  const status =
+    query.status === "all" || (query.status && SNAPBUG_REPORT_STATUSES.includes(query.status as (typeof SNAPBUG_REPORT_STATUSES)[number]))
+      ? query.status
+      : "open";
+  const sort: ReportSort = query.sort === "oldest" ? "oldest" : "newest";
+  const offset = Math.max(Number.parseInt(query.offset || "0", 10) || 0, 0);
+
+  return {
+    type,
+    status,
+    dateFrom: validDate(query.dateFrom) ? query.dateFrom! : "",
+    dateTo: validDate(query.dateTo) ? query.dateTo! : "",
+    sort,
+    limit: DEFAULT_LIMIT,
+    offset
+  };
+}
+
+function validDate(value?: string) {
+  return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value));
+}
+
+function nextUtcDate(value: string) {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString();
+}
+
 function emptyEnvironmentCounts() {
   return {
     total: 0,
@@ -301,7 +381,7 @@ function emptyEnvironmentCounts() {
   };
 }
 
-function buildCounts(rows: Array<{ environment: string; status: string }>) {
+function buildCounts(rows: Array<{ environment: string; status: string; total: number }>) {
   const counts = {
     development: emptyEnvironmentCounts(),
     production: emptyEnvironmentCounts()
@@ -309,11 +389,29 @@ function buildCounts(rows: Array<{ environment: string; status: string }>) {
 
   rows.forEach((row) => {
     if (row.environment !== "development" && row.environment !== "production") return;
-    counts[row.environment].total += 1;
-    counts[row.environment].byStatus[row.status] = (counts[row.environment].byStatus[row.status] || 0) + 1;
+    const total = Number(row.total || 0);
+    counts[row.environment].total += total;
+    counts[row.environment].byStatus[row.status] = total;
   });
 
   return counts;
+}
+
+function projectSectionHref(projectId: string, section: ProjectSection) {
+  if (section === "config") return `/projects/${projectId}?section=config`;
+  return `/projects/${projectId}?section=${section}&status=open&sort=newest`;
+}
+
+function reportHref(projectId: string, environment: SnapBugEnvironment, filters: ReportFilters, offset: number) {
+  const params = new URLSearchParams();
+  params.set("section", environment);
+  params.set("status", filters.status);
+  params.set("type", filters.type);
+  params.set("sort", filters.sort);
+  params.set("offset", String(offset));
+  if (filters.dateFrom) params.set("dateFrom", filters.dateFrom);
+  if (filters.dateTo) params.set("dateTo", filters.dateTo);
+  return `/projects/${projectId}?${params.toString()}`;
 }
 
 function safeHost(pageUrl: string) {

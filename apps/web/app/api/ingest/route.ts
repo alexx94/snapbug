@@ -165,7 +165,11 @@ async function uploadArtifacts(
       const screenshot = parseDataUrl(payload.screenshotDataUrl);
       if (screenshot) {
         const extension = screenshot.contentType === "image/jpeg" ? "jpg" : "png";
-        await uploadArtifact(admin, reportId, "screenshot", `${reportId}/screenshot.${extension}`, screenshot.contentType, screenshot.bytes);
+        await uploadArtifact(admin, reportId, "screenshot", `${reportId}/screenshot.${extension}`, screenshot.contentType, screenshot.bytes, {
+          displayName: "Initial screenshot",
+          isPrimary: true,
+          position: 0
+        });
       }
     } catch (error) {
       errors.push(`screenshot: ${error instanceof Error ? error.message : "failed"}`);
@@ -175,7 +179,10 @@ async function uploadArtifacts(
   if (payload.consoleLogs?.length) {
     try {
       const bytes = Buffer.from(JSON.stringify(payload.consoleLogs, null, 2));
-      await uploadArtifact(admin, reportId, "console_logs", `${reportId}/console-logs.json`, "application/json", bytes);
+      await uploadArtifact(admin, reportId, "console_logs", `${reportId}/console-logs.json`, "application/json", bytes, {
+        displayName: "Console logs",
+        position: 10
+      });
     } catch (error) {
       errors.push(`console_logs: ${error instanceof Error ? error.message : "failed"}`);
     }
@@ -184,7 +191,10 @@ async function uploadArtifacts(
   if (payload.replayEvents?.length) {
     try {
       const bytes = Buffer.from(JSON.stringify(payload.replayEvents));
-      await uploadArtifact(admin, reportId, "replay", `${reportId}/replay.json`, "application/json", bytes);
+      await uploadArtifact(admin, reportId, "replay", `${reportId}/replay.json`, "application/json", bytes, {
+        displayName: "Replay events",
+        position: 20
+      });
     } catch (error) {
       errors.push(`replay: ${error instanceof Error ? error.message : "failed"}`);
     }
@@ -208,7 +218,8 @@ async function uploadArtifact(
   kind: "screenshot" | "console_logs" | "replay",
   storagePath: string,
   contentType: string,
-  bytes: Buffer
+  bytes: Buffer,
+  options: { displayName: string; position: number; isPrimary?: boolean }
 ) {
   const { error: uploadError } = await admin.storage.from("report-artifacts").upload(storagePath, bytes, {
     contentType,
@@ -221,7 +232,10 @@ async function uploadArtifact(
     kind,
     storage_path: storagePath,
     content_type: contentType,
-    byte_size: bytes.byteLength
+    byte_size: bytes.byteLength,
+    display_name: options.displayName,
+    position: options.position,
+    is_primary: Boolean(options.isPrimary)
   });
   if (insertError) throw insertError;
 }

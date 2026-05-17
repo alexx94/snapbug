@@ -2,8 +2,7 @@
 
 import { regenerateProjectKeyAction, type RegenerateKeyState } from "@/app/(dashboard)/actions";
 import { Button } from "@/components/ui/button";
-import { Select } from "@/components/ui/fields";
-import { Copy, Check } from "lucide-react";
+import { Box, Check, Code2, Copy, FileCode2, Globe2 } from "lucide-react";
 import { useActionState, useMemo, useState } from "react";
 
 type KeyRow = {
@@ -17,6 +16,12 @@ type KeyRow = {
 
 const initialState: RegenerateKeyState = {};
 type EnvFormat = "vite" | "next" | "cra" | "plain";
+const envFormats: Array<{ value: EnvFormat; label: string; description: string; Icon: typeof Code2 }> = [
+  { value: "vite", label: "Vite", description: "React, Vue, SvelteKit", Icon: Code2 },
+  { value: "next", label: "Next.js", description: "Browser env", Icon: Box },
+  { value: "cra", label: "CRA", description: "React app prefix", Icon: FileCode2 },
+  { value: "plain", label: "Plain", description: "No prefix", Icon: Globe2 }
+];
 
 export function KeyManager({ projectId, keys }: { projectId: string; keys: KeyRow[] }) {
   const [state, action, pending] = useActionState(regenerateProjectKeyAction, initialState);
@@ -71,15 +76,27 @@ export function KeyManager({ projectId, keys }: { projectId: string; keys: KeyRo
         Old hash-only keys need one regeneration because the full value was not stored before.
       </p>
 
-      <label className="stack">
+      <div className="stack">
         <span className="muted">Client app env format</span>
-        <Select value={envFormat} onChange={(event) => setEnvFormat(event.target.value as EnvFormat)}>
-          <option value="vite">Vite / React / Vue / SvelteKit client: VITE_</option>
-          <option value="next">Next.js browser env: NEXT_PUBLIC_</option>
-          <option value="cra">Create React App: REACT_APP_</option>
-          <option value="plain">Plain variable name</option>
-        </Select>
-      </label>
+        <div className="env-format-grid" role="radiogroup" aria-label="Client app env format">
+          {envFormats.map(({ value, label, description, Icon }) => (
+            <button
+              aria-checked={envFormat === value}
+              className={`env-format-option${envFormat === value ? " active" : ""}`}
+              key={value}
+              onClick={() => setEnvFormat(value)}
+              role="radio"
+              type="button"
+            >
+              <Icon size={18} />
+              <span>
+                <strong>{label}</strong>
+                <small>{description}</small>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="stack">
         {rows.map((row) => (

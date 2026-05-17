@@ -3,6 +3,7 @@
 import { generateProjectKey, hashProjectKey, slugify, visibleKeyPrefix } from "@/lib/crypto";
 import { normalizeOrigin } from "@/lib/origins";
 import { createClient } from "@/lib/supabase/server";
+import { SNAPBUG_REPORT_PRIORITIES, SNAPBUG_REPORT_STATUSES } from "@snapbug/shared/types";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
@@ -156,6 +157,22 @@ export async function updateReportAction(formData: FormData) {
   const priority = String(formData.get("priority") || "");
 
   if (!reportId) return;
-  await supabase.from("reports").update({ status, priority }).eq("id", reportId);
+  if (
+    !SNAPBUG_REPORT_STATUSES.includes(status as (typeof SNAPBUG_REPORT_STATUSES)[number]) ||
+    !SNAPBUG_REPORT_PRIORITIES.includes(priority as (typeof SNAPBUG_REPORT_PRIORITIES)[number])
+  ) {
+    redirect(`/reports/${reportId}?error=Invalid+status+or+priority`);
+  }
+
+  const { data: report } = await supabase.from("reports").select("project_id").eq("id", reportId).single();
+  if (!report) return;
+
+  const { error } = await supabase.from("reports").update({ status, priority }).eq("id", reportId);
+  if (error) {
+    redirect(`/reports/${reportId}?error=${encodeURIComponent(error.message)}`);
+  }
+
+  revalidatePath(`/reports/${reportId}`);
+  revalidatePath(`/projects/${report.project_id}`);
   redirect(`/reports/${reportId}?success=Report+updated`);
 }

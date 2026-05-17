@@ -1,4 +1,3 @@
-import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 
@@ -28,8 +27,7 @@ export async function GET(
     return NextResponse.json({ error: "Artifact not found" }, { status: 404 });
   }
 
-  const admin = createAdminClient();
-  const { data, error: signedError } = await admin.storage
+  const { data, error: signedError } = await supabase.storage
     .from("report-artifacts")
     .createSignedUrl(artifact.storage_path, 60 * 10);
 
