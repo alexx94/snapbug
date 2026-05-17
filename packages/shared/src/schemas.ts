@@ -25,6 +25,7 @@ export const browserInfoSchema = z.object({
 
 export const ingestPayloadSchema: z.ZodType<SnapBugIngestPayload> = z.object({
   key: z.string().min(16).max(200).regex(/^pk_(dev|live)_[A-Za-z0-9_-]+$/),
+  developerToken: z.string().min(16).max(200).regex(/^sbdt_[A-Za-z0-9_-]+$/).optional(),
   type: z.enum(SNAPBUG_REPORT_TYPES),
   priority: z.enum(SNAPBUG_REPORT_PRIORITIES).default("medium").optional(),
   title: z.string().trim().max(200).optional(),

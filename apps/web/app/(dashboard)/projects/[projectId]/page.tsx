@@ -1,15 +1,18 @@
 import { addOriginAction, deleteOriginAction } from "@/app/(dashboard)/actions";
+import { DeveloperTokensPanel } from "@/components/dashboard/developer-tokens-panel";
 import { KeyManager } from "@/components/dashboard/key-manager";
+import { InviteMemberForm, RemoveMemberButton } from "@/components/dashboard/team-actions";
 import { Button } from "@/components/ui/button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { Input, Select } from "@/components/ui/fields";
 import { Toast } from "@/components/ui/toast";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { SNAPBUG_REPORT_STATUSES, SNAPBUG_REPORT_TYPES, type SnapBugEnvironment } from "@snapbug/shared/types";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-type ProjectSection = "development" | "production" | "config";
+type ProjectSection = "development" | "production" | "config" | "team";
 type ReportSort = "newest" | "oldest";
 type ReportRow = {
   id: string;
@@ -50,6 +53,7 @@ export default async function ProjectPage({
     dateTo?: string;
     sort?: string;
     offset?: string;
+    teamOffset?: string;
     success?: string;
     error?: string;
   }>;
@@ -58,16 +62,27 @@ export default async function ProjectPage({
   const query = await searchParams;
   const section = normalizeSection(query.section);
   const filters = normalizeFilters(query);
+  const teamOffset = Math.max(Number.parseInt(query.teamOffset || "0", 10) || 0, 0);
   const supabase = await createClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
 
-  const { data: project } = await supabase.from("projects").select("id, name, slug").eq("id", projectId).single();
+  const { data: project } = await supabase.from("projects").select("id, name, slug, owner_id").eq("id", projectId).single();
   if (!project) notFound();
+  const isOwner = project.owner_id === user?.id;
 
-  const [{ data: keys }, { data: origins }, reportCountsResult] = await Promise.all([
+  const [{ data: keys }, { data: origins }, { data: developerTokens }, reportCountsResult] = await Promise.all([
     supabase.from("project_keys").select("id, environment, key_value, key_prefix, enabled, last_used_at").eq("project_id", projectId),
     supabase.from("project_origins").select("id, environment, origin, enabled").eq("project_id", projectId).order("environment"),
+    supabase
+      .from("developer_tokens")
+      .select("id, name, last_used_at, expires_at, revoked_at, created_at")
+      .order("created_at", { ascending: false }),
     supabase.rpc("get_project_report_counts", { p_project_id: projectId })
   ]);
+  const teamData = section === "team" ? await loadTeam(supabase, projectId, teamOffset) : null;
+  const pendingInvites = isOwner && section === "team" ? await loadPendingProjectInvites(projectId) : [];
 
   const reportEnvironment: SnapBugEnvironment = section === "production" ? "production" : "development";
   let reports: ReportRow[] = [];
@@ -116,10 +131,28 @@ export default async function ProjectPage({
         <Link className={section === "config" ? "active" : ""} href={projectSectionHref(projectId, "config")}>
           Config
         </Link>
+        <Link className={section === "team" ? "active" : ""} href={projectSectionHref(projectId, "team")}>
+          Team
+        </Link>
       </nav>
 
       {section === "config" ? (
-        <ConfigSection projectId={projectId} keys={keys || []} origins={origins || []} />
+        <ConfigSection
+          developerTokens={developerTokens || []}
+          isOwner={isOwner}
+          projectId={projectId}
+          keys={keys || []}
+          origins={origins || []}
+        />
+      ) : section === "team" ? (
+        <TeamSection
+          isOwner={isOwner}
+          members={teamData?.members || []}
+          offset={teamOffset}
+          pendingInvites={pendingInvites || []}
+          projectId={projectId}
+          total={teamData?.total || 0}
+        />
       ) : (
         <ReportsSection
           projectId={projectId}
@@ -135,10 +168,21 @@ export default async function ProjectPage({
 }
 
 function ConfigSection({
+  developerTokens,
+  isOwner,
   projectId,
   keys,
   origins
 }: {
+  developerTokens: Array<{
+    id: string;
+    name: string;
+    last_used_at: string | null;
+    expires_at: string;
+    revoked_at: string | null;
+    created_at: string;
+  }>;
+  isOwner: boolean;
   projectId: string;
   keys: Array<{
     id: string;
@@ -154,20 +198,25 @@ function ConfigSection({
     <section className="grid two">
       <Card>
         <CardTitle>Project keys</CardTitle>
-        <KeyManager projectId={projectId} keys={keys} />
+        <KeyManager canManage={isOwner} projectId={projectId} keys={keys} />
+        {!isOwner ? <p className="muted">Project members can copy keys, but only the owner can regenerate them.</p> : null}
       </Card>
 
       <Card>
         <CardTitle>Allowed origins</CardTitle>
-        <form className="row origin-form" action={addOriginAction}>
-          <input type="hidden" name="projectId" value={projectId} />
-          <Select name="environment" defaultValue="development">
-            <option value="development">Development</option>
-            <option value="production">Production</option>
-          </Select>
-          <Input name="origin" placeholder="http://localhost:3000" required />
-          <Button>Add</Button>
-        </form>
+        {isOwner ? (
+          <form className="row origin-form" action={addOriginAction}>
+            <input type="hidden" name="projectId" value={projectId} />
+            <Select name="environment" defaultValue="development">
+              <option value="development">Development</option>
+              <option value="production">Production</option>
+            </Select>
+            <Input name="origin" placeholder="http://localhost:3000" required />
+            <Button>Add</Button>
+          </form>
+        ) : (
+          <p className="muted">Only the project owner can manage allowed origins.</p>
+        )}
         <div className="stack" style={{ marginTop: 14 }}>
           {origins.length ? (
             origins.map((origin) => (
@@ -178,11 +227,105 @@ function ConfigSection({
                   <span className={origin.environment === "development" ? "badge dev" : "badge prod"}>{origin.environment}</span>{" "}
                   <span>{origin.origin}</span>
                 </div>
-                <Button variant="secondary">Remove</Button>
+                {isOwner ? <Button variant="secondary">Remove</Button> : null}
               </form>
             ))
           ) : (
             <p className="muted">No origins configured.</p>
+          )}
+        </div>
+      </Card>
+
+      <Card>
+        <CardTitle>Developer tokens</CardTitle>
+        <DeveloperTokensPanel tokens={developerTokens} />
+      </Card>
+    </section>
+  );
+}
+
+function TeamSection({
+  isOwner,
+  members,
+  offset,
+  pendingInvites,
+  projectId,
+  total
+}: {
+  isOwner: boolean;
+  members: Array<{ user_id: string; role: string; created_at: string; email: string; full_name: string | null }>;
+  offset: number;
+  pendingInvites: Array<{ id: string; email: string; status: string; expires_at: string; created_at: string }>;
+  projectId: string;
+  total: number;
+}) {
+  const limit = 25;
+  const nextOffset = offset + limit;
+  const previousOffset = Math.max(offset - limit, 0);
+
+  return (
+    <section className="grid two">
+      <Card>
+        <div className="row between card-heading">
+          <CardTitle>Team members</CardTitle>
+          <span className="muted">{total} total</span>
+        </div>
+        <div className="attachment-list">
+          {members.length ? (
+            members.map((member) => (
+              <div className="attachment-list-item" key={member.user_id}>
+                <div>
+                  <strong>{member.full_name || member.email}</strong>
+                  <p className="muted">{member.email}</p>
+                  <span className={member.role === "owner" ? "badge role-badge priority-critical" : "badge role-badge priority-low"}>
+                    {member.role}
+                  </span>
+                </div>
+                {isOwner && member.role !== "owner" ? <RemoveMemberButton projectId={projectId} userId={member.user_id} /> : null}
+              </div>
+            ))
+          ) : (
+            <p className="muted">No team members found.</p>
+          )}
+        </div>
+        <div className="pagination-row">
+          <Link
+            aria-disabled={offset === 0}
+            className={`button secondary${offset === 0 ? " disabled" : ""}`}
+            href={`/projects/${projectId}?section=team&teamOffset=${previousOffset}`}
+          >
+            Previous
+          </Link>
+          <span className="muted">Page {Math.floor(offset / limit) + 1}</span>
+          <Link
+            aria-disabled={nextOffset >= total}
+            className={`button secondary${nextOffset >= total ? " disabled" : ""}`}
+            href={`/projects/${projectId}?section=team&teamOffset=${nextOffset}`}
+          >
+            Next
+          </Link>
+        </div>
+      </Card>
+
+      <Card>
+        <CardTitle>Invite developers</CardTitle>
+        {isOwner ? <InviteMemberForm projectId={projectId} /> : <p className="muted">Only the project owner can invite members.</p>}
+        <div className="stack" style={{ marginTop: 18 }}>
+          <strong>Pending invites</strong>
+          {pendingInvites.length ? (
+            <div className="attachment-list">
+              {pendingInvites.map((invite) => (
+                <div className="attachment-list-item" key={invite.id}>
+                  <div>
+                    <strong>{invite.email}</strong>
+                    <p className="muted">Expires {new Date(invite.expires_at).toLocaleDateString()}</p>
+                  </div>
+                  <span className="badge priority-low">{invite.status}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="muted">No pending invites.</p>
           )}
         </div>
       </Card>
@@ -340,7 +483,7 @@ function ReportTable({ reports }: { reports: ReportRow[] }) {
 }
 
 function normalizeSection(section?: string): ProjectSection {
-  if (section === "production" || section === "config") return section;
+  if (section === "production" || section === "config" || section === "team") return section;
   return "development";
 }
 
@@ -399,6 +542,7 @@ function buildCounts(rows: Array<{ environment: string; status: string; total: n
 
 function projectSectionHref(projectId: string, section: ProjectSection) {
   if (section === "config") return `/projects/${projectId}?section=config`;
+  if (section === "team") return `/projects/${projectId}?section=team`;
   return `/projects/${projectId}?section=${section}&status=open&sort=newest`;
 }
 
@@ -412,6 +556,51 @@ function reportHref(projectId: string, environment: SnapBugEnvironment, filters:
   if (filters.dateFrom) params.set("dateFrom", filters.dateFrom);
   if (filters.dateTo) params.set("dateTo", filters.dateTo);
   return `/projects/${projectId}?${params.toString()}`;
+}
+
+async function loadTeam(supabase: Awaited<ReturnType<typeof createClient>>, projectId: string, offset: number) {
+  const limit = 25;
+  const { data: members, count } = await supabase
+    .from("project_members")
+    .select("user_id, role, created_at", { count: "exact" })
+    .eq("project_id", projectId)
+    .order("role")
+    .order("created_at")
+    .range(offset, offset + limit - 1);
+
+  if (!members?.length) return { members: [], total: count || 0 };
+
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("id, email, full_name")
+    .in("id", members.map((member) => member.user_id));
+
+  return {
+    total: count || 0,
+    members: members.map((member) => {
+      const profile = profiles?.find((item) => item.id === member.user_id);
+      return {
+        user_id: member.user_id,
+        role: member.role,
+        created_at: member.created_at,
+        email: profile?.email || "Unknown email",
+        full_name: profile?.full_name || null
+      };
+    })
+  };
+}
+
+async function loadPendingProjectInvites(projectId: string) {
+  const admin = createAdminClient();
+  const { data } = await admin
+    .from("project_invites")
+    .select("id, email, status, expires_at, created_at")
+    .eq("project_id", projectId)
+    .eq("status", "pending")
+    .order("created_at", { ascending: false })
+    .limit(25);
+
+  return data || [];
 }
 
 function safeHost(pageUrl: string) {

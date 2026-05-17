@@ -17,7 +17,6 @@ import type {
   WidgetSubmitResultMessage
 } from "./messages";
 
-const REPORTER_STORAGE_KEY = "snapbug.reporterName";
 const PLACEMENT_STORAGE_KEY = "snapbug.widgetPlacement";
 const MAX_LOGS = 80;
 const MAX_REPLAY_EVENTS = 150;
@@ -39,7 +38,8 @@ class SnapBugClient {
   private apiBaseUrl: string;
   private platformOrigin: string;
   private button?: HTMLButtonElement;
-  private iframe?: HTMLIFrameElement;
+  private iframes: Partial<Record<SnapBugPresentation, HTMLIFrameElement>> = {};
+  private activePresentation?: SnapBugPresentation;
   private submitting = false;
   private consoleEntries: SnapBugConsoleEntry[] = [];
   private replayEvents: unknown[] = [];
@@ -80,33 +80,38 @@ class SnapBugClient {
     this.stopReplay?.();
     this.restoreConsole();
     this.button?.remove();
-    this.iframe?.remove();
+    Object.values(this.iframes).forEach((iframe) => iframe?.remove());
+    this.iframes = {};
   }
 
   open(options: SnapBugOpenOptions = {}) {
     if (this.options.enabled === false) return;
-    const presentation = options.presentation ?? "modal";
-    if (!this.iframe) {
-      this.createIframe(presentation);
-      return;
-    }
-
-    this.presentation = presentation;
-    this.applyIframeLayout();
-    this.iframe.style.display = "block";
-    this.postContext();
+    const presentation = options.presentation ?? this.presentation;
+    const iframe = this.ensureIframe(presentation);
+    this.activePresentation = presentation;
+    this.applyIframeLayout(iframe, presentation);
+    iframe.style.display = "block";
+    this.postContext(iframe);
   }
 
   close() {
-    if (this.iframe) this.iframe.style.display = "none";
+    if (this.activePresentation) {
+      this.iframes[this.activePresentation]!.style.display = "none";
+      return;
+    }
+    Object.values(this.iframes).forEach((iframe) => {
+      if (iframe) iframe.style.display = "none";
+    });
   }
 
   toggle(options: SnapBugOpenOptions = {}) {
-    if (!this.iframe || this.iframe.style.display === "none") {
+    const presentation = options.presentation ?? this.presentation;
+    const iframe = this.iframes[presentation];
+    if (!iframe || iframe.style.display === "none") {
       this.open(options);
       return;
     }
-    this.close();
+    iframe.style.display = "none";
   }
 
   setPlacement(placement: SnapBugWidgetPlacement) {
@@ -120,7 +125,9 @@ class SnapBugClient {
       }
     }
     this.applyButtonPlacement();
-    this.applyIframeLayout();
+    Object.entries(this.iframes).forEach(([presentation, iframe]) => {
+      if (iframe) this.applyIframeLayout(iframe, presentation as SnapBugPresentation);
+    });
     this.postContext();
   }
 
@@ -191,19 +198,18 @@ class SnapBugClient {
       "justify-content:center",
       "transition:transform 150ms ease,box-shadow 150ms ease"
     ].join(";");
-    button.addEventListener("click", () => this.toggle({ presentation: "popover" }));
+    button.addEventListener("click", () => {
+      this.toggle({ presentation: this.trigger === "button" ? "modal" : "popover" });
+    });
     document.documentElement.appendChild(button);
     this.button = button;
     this.applyButtonPlacement();
   }
 
-  private defaultButtonLabel() {
-    if (this.environment === "development") return "SB Dev";
-    return this.trigger === "button" ? "Report issue" : "Issue";
-  }
+  private ensureIframe(presentation: SnapBugPresentation) {
+    const existing = this.iframes[presentation];
+    if (existing) return existing;
 
-  private createIframe(presentation: SnapBugPresentation) {
-    this.presentation = presentation;
     const iframe = document.createElement("iframe");
     iframe.src = `${this.apiBaseUrl}/widget?environment=${this.environment}`;
     iframe.title = "SnapBug";
@@ -217,9 +223,11 @@ class SnapBugClient {
       "box-shadow:0 24px 70px rgba(15,23,42,.28)",
       "background:#fff"
     ].join(";");
+    iframe.style.display = "none";
     document.documentElement.appendChild(iframe);
-    this.iframe = iframe;
-    this.applyIframeLayout();
+    this.iframes[presentation] = iframe;
+    this.applyIframeLayout(iframe, presentation);
+    return iframe;
   }
 
   private applyButtonPlacement() {
@@ -231,27 +239,26 @@ class SnapBugClient {
     this.button.style[horizontal] = "18px";
   }
 
-  private applyIframeLayout() {
-    if (!this.iframe) return;
-    this.resetPlacement(this.iframe);
+  private applyIframeLayout(iframe: HTMLIFrameElement, presentation: SnapBugPresentation) {
+    this.resetPlacement(iframe);
 
-    if (this.presentation === "modal") {
-      this.iframe.style.top = "50%";
-      this.iframe.style.left = "50%";
-      this.iframe.style.transform = "translate(-50%,-50%)";
-      this.iframe.style.width = "min(460px,calc(100vw - 32px))";
-      this.iframe.style.height = "min(560px,calc(100vh - 32px))";
+    if (presentation === "modal") {
+      iframe.style.top = "50%";
+      iframe.style.left = "50%";
+      iframe.style.transform = "translate(-50%,-50%)";
+      iframe.style.width = "min(460px,calc(100vw - 32px))";
+      iframe.style.height = "min(560px,calc(100vh - 32px))";
       return;
     }
 
-    this.iframe.style.transform = "";
-    this.iframe.style.width = "min(420px,calc(100vw - 32px))";
-    this.iframe.style.height = "min(620px,calc(100vh - 96px))";
+    iframe.style.transform = "";
+    iframe.style.width = "min(420px,calc(100vw - 32px))";
+    iframe.style.height = "min(620px,calc(100vh - 96px))";
 
     const vertical = this.placement.startsWith("top") ? "top" : "bottom";
     const horizontal = this.placement.endsWith("left") ? "left" : "right";
-    this.iframe.style[vertical] = this.placement.startsWith("top") ? "74px" : "74px";
-    this.iframe.style[horizontal] = "18px";
+    iframe.style[vertical] = "74px";
+    iframe.style[horizontal] = "18px";
   }
 
   private resetPlacement(element: HTMLElement) {
@@ -265,14 +272,16 @@ class SnapBugClient {
   private handleMessage = (event: MessageEvent) => {
     if (event.origin !== this.platformOrigin) return;
     const data = event.data as WidgetReadyMessage | WidgetSubmitMessage | WidgetCloseMessage | WidgetSetPlacementMessage;
+    const iframe = this.getIframeForSource(event.source);
+    if (!iframe) return;
 
     if (data?.source === "snapbug-widget" && data.type === "SNAPBUG_WIDGET_READY") {
-      this.postContext();
+      this.postContext(iframe);
       return;
     }
 
     if (data?.source === "snapbug-widget" && data.type === "SNAPBUG_SUBMIT") {
-      void this.submit(data.payload);
+      void this.submit(data.payload, iframe);
       return;
     }
 
@@ -282,32 +291,32 @@ class SnapBugClient {
     }
 
     if (data?.type === "SNAPBUG_CLOSE") {
-      this.close();
+      iframe.style.display = "none";
     }
   };
 
-  private postContext() {
-    this.iframe?.contentWindow?.postMessage(
+  private getIframeForSource(source: MessageEventSource | null) {
+    return Object.values(this.iframes).find((iframe) => iframe?.contentWindow === source);
+  }
+
+  private postContext(target?: HTMLIFrameElement) {
+    const targets = target ? [target] : Object.values(this.iframes);
+    targets.forEach((iframe) => iframe?.contentWindow?.postMessage(
       {
         source: "snapbug-sdk",
         type: "SNAPBUG_CONTEXT",
         environment: this.environment,
         placement: this.placement,
-        reporterName: this.getReporterName(),
         consoleLogs: this.consoleEntries,
         pageUrl: window.location.href
       },
       this.platformOrigin
-    );
+    ));
   }
 
-  private async submit(form: WidgetSubmitMessage["payload"]) {
+  private async submit(form: WidgetSubmitMessage["payload"], sourceFrame: HTMLIFrameElement) {
     if (this.submitting) return;
     this.submitting = true;
-
-    if (this.environment === "development" && form.reporterName) {
-      window.localStorage.setItem(REPORTER_STORAGE_KEY, form.reporterName);
-    }
 
     try {
       this.setChromeVisibility(false);
@@ -317,18 +326,19 @@ class SnapBugClient {
       if (this.environment === "development") {
         screenshotDataUrl = await createAnnotator(screenshotDataUrl);
         if (screenshotDataUrl === null) {
-          this.postResult({ ok: false, error: "cancelled" });
+          this.postResult(sourceFrame, { ok: false, error: "cancelled" });
           return;
         }
       }
 
       const payload: SnapBugIngestPayload = {
         key: this.key,
+        developerToken: this.environment === "development" ? this.options.developerToken : undefined,
         type: this.environment === "production" ? "bug" : form.type,
         priority: form.priority,
         title: form.title,
         message: form.message,
-        reporterName: this.environment === "development" ? form.reporterName : undefined,
+        reporterName: this.environment === "production" ? form.reporterName : undefined,
         pageUrl: window.location.href,
         userAgent: navigator.userAgent,
         browser: {
@@ -360,17 +370,17 @@ class SnapBugClient {
       const result = (await response.json().catch(() => ({}))) as { reportId?: string; error?: string };
       if (!response.ok) throw new Error(result.error || "Report failed");
 
-      this.postResult({ ok: true, reportId: result.reportId });
+      this.postResult(sourceFrame, { ok: true, reportId: result.reportId });
     } catch (error) {
       this.setChromeVisibility(true);
-      this.postResult({ ok: false, error: error instanceof Error ? error.message : "Report failed" });
+      this.postResult(sourceFrame, { ok: false, error: error instanceof Error ? error.message : "Report failed" });
     } finally {
       this.submitting = false;
     }
   }
 
-  private postResult(result: Omit<WidgetSubmitResultMessage, "source" | "type">) {
-    this.iframe?.contentWindow?.postMessage(
+  private postResult(target: HTMLIFrameElement, result: Omit<WidgetSubmitResultMessage, "source" | "type">) {
+    target.contentWindow?.postMessage(
       {
         source: "snapbug-sdk",
         type: "SNAPBUG_SUBMIT_RESULT",
@@ -410,14 +420,6 @@ class SnapBugClient {
   private setChromeVisibility(visible: boolean) {
     const display = visible ? "" : "none";
     if (this.button) this.button.style.display = display;
-  }
-
-  private getReporterName() {
-    try {
-      return window.localStorage.getItem(REPORTER_STORAGE_KEY) || undefined;
-    } catch {
-      return undefined;
-    }
   }
 
   private captureConsole() {

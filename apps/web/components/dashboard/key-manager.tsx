@@ -23,7 +23,7 @@ const envFormats: Array<{ value: EnvFormat; label: string; description: string; 
   { value: "plain", label: "Plain", description: "No prefix", Icon: Globe2 }
 ];
 
-export function KeyManager({ projectId, keys }: { projectId: string; keys: KeyRow[] }) {
+export function KeyManager({ canManage = true, projectId, keys }: { canManage?: boolean; projectId: string; keys: KeyRow[] }) {
   const [state, action, pending] = useActionState(regenerateProjectKeyAction, initialState);
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
   const [envFormat, setEnvFormat] = useState<EnvFormat>("vite");
@@ -106,13 +106,15 @@ export function KeyManager({ projectId, keys }: { projectId: string; keys: KeyRo
                 <span className={row.environment === "development" ? "badge dev" : "badge prod"}>{row.environment}</span>
                 <span className="muted">Last used: {row.key?.last_used_at ? new Date(row.key.last_used_at).toLocaleString() : "Never"}</span>
               </div>
-              <form action={action}>
-                <input type="hidden" name="projectId" value={projectId} />
-                <input type="hidden" name="environment" value={row.environment} />
-                <Button variant="secondary" disabled={pending}>
-                  {row.key ? "Regenerate" : "Generate"}
-                </Button>
-              </form>
+              {canManage ? (
+                <form action={action}>
+                  <input type="hidden" name="projectId" value={projectId} />
+                  <input type="hidden" name="environment" value={row.environment} />
+                  <Button variant="secondary" disabled={pending}>
+                    {row.key ? "Regenerate" : "Generate"}
+                  </Button>
+                </form>
+              ) : null}
             </div>
             <div>
                 {row.key?.key_value ? (

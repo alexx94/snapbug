@@ -11,7 +11,6 @@ export type WidgetContextMessage = {
   type: "SNAPBUG_CONTEXT";
   environment: SnapBugEnvironment;
   placement: SnapBugWidgetPlacement;
-  reporterName?: string;
   consoleLogs: SnapBugConsoleEntry[];
   pageUrl: string;
 };

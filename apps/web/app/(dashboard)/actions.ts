@@ -2,8 +2,8 @@
 
 import { generateProjectKey, hashProjectKey, slugify, visibleKeyPrefix } from "@/lib/crypto";
 import { normalizeOrigin } from "@/lib/origins";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { SNAPBUG_REPORT_PRIORITIES, SNAPBUG_REPORT_STATUSES } from "@snapbug/shared/types";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
@@ -45,6 +45,12 @@ export async function createProjectAction(_state: CreateProjectState, formData: 
     .single();
 
   if (projectError || !project) return { error: projectError?.message || "Project creation failed" };
+
+  const admin = createAdminClient();
+  const { error: memberError } = await admin
+    .from("project_members")
+    .insert({ project_id: project.id, user_id: user.id, role: "owner" });
+  if (memberError) return { error: memberError.message };
 
   const devKey = generateProjectKey("development");
   const liveKey = generateProjectKey("production");
@@ -148,31 +154,4 @@ export async function deleteOriginAction(formData: FormData) {
   }
 
   redirect(`/projects/${projectId}?section=config&success=Origin+removed`);
-}
-
-export async function updateReportAction(formData: FormData) {
-  const supabase = await createClient();
-  const reportId = String(formData.get("reportId") || "");
-  const status = String(formData.get("status") || "");
-  const priority = String(formData.get("priority") || "");
-
-  if (!reportId) return;
-  if (
-    !SNAPBUG_REPORT_STATUSES.includes(status as (typeof SNAPBUG_REPORT_STATUSES)[number]) ||
-    !SNAPBUG_REPORT_PRIORITIES.includes(priority as (typeof SNAPBUG_REPORT_PRIORITIES)[number])
-  ) {
-    redirect(`/reports/${reportId}?error=Invalid+status+or+priority`);
-  }
-
-  const { data: report } = await supabase.from("reports").select("project_id").eq("id", reportId).single();
-  if (!report) return;
-
-  const { error } = await supabase.from("reports").update({ status, priority }).eq("id", reportId);
-  if (error) {
-    redirect(`/reports/${reportId}?error=${encodeURIComponent(error.message)}`);
-  }
-
-  revalidatePath(`/reports/${reportId}`);
-  revalidatePath(`/projects/${report.project_id}`);
-  redirect(`/reports/${reportId}?success=Report+updated`);
 }

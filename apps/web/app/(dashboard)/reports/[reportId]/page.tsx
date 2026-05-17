@@ -19,7 +19,18 @@ type ArtifactRow = {
   description: string | null;
   is_primary: boolean;
   storage_path: string;
+  uploaded_by: string | null;
+  uploader_email?: string | null;
   signed_url?: string | null;
+};
+
+type AuditEvent = {
+  id: string;
+  action: string;
+  actor_email: string | null;
+  old_values: Record<string, unknown> | null;
+  new_values: Record<string, unknown> | null;
+  created_at: string;
 };
 
 export default async function ReportPage({
@@ -45,15 +56,22 @@ export default async function ReportPage({
 
   const { data: artifacts } = await supabase
     .from("report_artifacts")
-    .select("id, kind, content_type, byte_size, created_at, display_name, description, is_primary, storage_path")
+    .select("id, kind, content_type, byte_size, created_at, display_name, description, is_primary, storage_path, uploaded_by")
     .eq("report_id", reportId)
     .order("is_primary", { ascending: false })
     .order("position", { ascending: true })
     .order("created_at");
 
-  const artifactRows = await withSignedUrls(supabase, ((artifacts || []) as ArtifactRow[]).sort((a, b) => Number(b.is_primary) - Number(a.is_primary)));
+  const artifactRowsWithUploaders = await attachUploaderEmails(supabase, (artifacts || []) as ArtifactRow[]);
+  const artifactRows = await withSignedUrls(supabase, artifactRowsWithUploaders.sort((a, b) => Number(b.is_primary) - Number(a.is_primary)));
   const primaryArtifact = artifactRows.find((artifact) => artifact.is_primary) || artifactRows.find((artifact) => artifact.content_type.startsWith("image/"));
   const secondaryArtifacts = artifactRows.filter((artifact) => artifact.id !== primaryArtifact?.id);
+  const { data: auditEvents } = await supabase
+    .from("project_audit_events")
+    .select("id, action, actor_email, old_values, new_values, created_at")
+    .eq("report_id", reportId)
+    .order("created_at", { ascending: false })
+    .limit(50);
 
   return (
     <main className="page dashboard-page">
@@ -117,6 +135,7 @@ export default async function ReportPage({
                     <p className="muted">
                       {formatBytes(primaryArtifact.byte_size || 0)} - {new Date(primaryArtifact.created_at).toLocaleString()}
                     </p>
+                    <p className="muted">Uploaded by {primaryArtifact.uploader_email || "SnapBug"}</p>
                   </div>
                   {primaryArtifact.signed_url ? (
                     <a className="button secondary" href={primaryArtifact.signed_url} rel="noreferrer" target="_blank">
@@ -144,6 +163,7 @@ export default async function ReportPage({
                       <span className="muted">
                         {artifact.content_type} - {formatBytes(artifact.byte_size || 0)} - {new Date(artifact.created_at).toLocaleString()}
                       </span>
+                      <span className="muted">Uploaded by {artifact.uploader_email || "SnapBug"}</span>
                     </div>
                     {artifact.signed_url ? (
                       <a className="button secondary" href={artifact.signed_url} rel="noreferrer" target="_blank">
@@ -176,6 +196,11 @@ export default async function ReportPage({
               viewport={report.viewport}
             />
           </Card>
+
+          <Card>
+            <CardTitle>Activity</CardTitle>
+            <ActivityList events={(auditEvents || []) as AuditEvent[]} />
+          </Card>
         </aside>
       </section>
     </main>
@@ -207,6 +232,17 @@ async function withSignedUrls(supabase: Awaited<ReturnType<typeof createClient>>
   );
 }
 
+async function attachUploaderEmails(supabase: Awaited<ReturnType<typeof createClient>>, artifacts: ArtifactRow[]) {
+  const uploaderIds = [...new Set(artifacts.map((artifact) => artifact.uploaded_by).filter(Boolean))] as string[];
+  if (!uploaderIds.length) return artifacts;
+
+  const { data: profiles } = await supabase.from("profiles").select("id, email").in("id", uploaderIds);
+  return artifacts.map((artifact) => ({
+    ...artifact,
+    uploader_email: profiles?.find((profile) => profile.id === artifact.uploaded_by)?.email || null
+  }));
+}
+
 function toViewerArtifact(artifact: ArtifactRow) {
   return {
     id: artifact.id,
@@ -214,4 +250,35 @@ function toViewerArtifact(artifact: ArtifactRow) {
     content_type: artifact.content_type,
     display_name: artifact.display_name
   };
+}
+
+function ActivityList({ events }: { events: AuditEvent[] }) {
+  if (!events.length) return <p className="muted">No activity recorded yet.</p>;
+
+  return (
+    <div className="activity-list">
+      {events.map((event) => (
+        <div className="activity-item" key={event.id}>
+          <strong>{activityLabel(event)}</strong>
+          <p className="muted">
+            {event.actor_email || "System"} - {new Date(event.created_at).toLocaleString()}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function activityLabel(event: AuditEvent) {
+  if (event.action === "report.status_updated") {
+    const oldStatus = String(event.old_values?.status || "unknown").replace("_", " ");
+    const newStatus = String(event.new_values?.status || "unknown").replace("_", " ");
+    const oldPriority = String(event.old_values?.priority || "unknown");
+    const newPriority = String(event.new_values?.priority || "unknown");
+    if (oldStatus !== newStatus && oldPriority !== newPriority) return `Changed status to ${newStatus} and priority to ${newPriority}`;
+    if (oldStatus !== newStatus) return `Changed status to ${newStatus}`;
+    return `Changed priority to ${newPriority}`;
+  }
+  if (event.action === "artifact.uploaded") return `Uploaded ${String(event.new_values?.display_name || "attachment")}`;
+  return event.action.replaceAll(".", " ").replaceAll("_", " ");
 }

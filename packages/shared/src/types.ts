@@ -36,6 +36,7 @@ export interface SnapBugBrowserInfo {
 
 export interface SnapBugIngestPayload {
   key: string;
+  developerToken?: string;
   type: SnapBugReportType;
   priority?: SnapBugReportPriority;
   title?: string;
@@ -55,6 +56,7 @@ export interface SnapBugInitOptions {
   key?: string;
   developmentKey?: string;
   productionKey?: string;
+  developerToken?: string;
   environment?: SnapBugEnvironment | "auto";
   apiBaseUrl?: string;
   enabled?: boolean;

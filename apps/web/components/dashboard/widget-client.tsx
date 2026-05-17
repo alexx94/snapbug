@@ -13,7 +13,6 @@ export function WidgetClient({ environment }: { environment: SnapBugEnvironment 
   const [type, setType] = useState<SnapBugReportType>("bug");
   const [placement, setPlacement] = useState<SnapBugWidgetPlacement>("bottom-right");
   const [priority, setPriority] = useState<SnapBugReportPriority>("medium");
-  const [reporterName, setReporterName] = useState("");
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState("");
   const [view, setView] = useState<View>("form");
@@ -40,7 +39,6 @@ export function WidgetClient({ environment }: { environment: SnapBugEnvironment 
         setParentOrigin(event.origin);
         setContext(data);
         setPlacement(data.placement);
-        setReporterName(data.reporterName || "");
       }
 
       if (data?.source === "snapbug-sdk" && data.type === "SNAPBUG_SUBMIT_RESULT") {
@@ -102,8 +100,7 @@ export function WidgetClient({ environment }: { environment: SnapBugEnvironment 
           type,
           priority,
           title: title.trim(),
-          message: message.trim(),
-          reporterName: environment === "development" ? reporterName.trim() || undefined : undefined
+          message: message.trim()
         }
       },
       parentOrigin
@@ -175,10 +172,6 @@ export function WidgetClient({ environment }: { environment: SnapBugEnvironment 
 
         {environment === "development" ? (
           <>
-            <label className="stack">
-              <span className="muted">Name</span>
-              <input className="input" value={reporterName} onChange={(event) => setReporterName(event.target.value)} required />
-            </label>
             <div className="grid two">
               <label className="stack">
                 <span className="muted">Type</span>

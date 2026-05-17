@@ -229,6 +229,10 @@
   .badge.priority-medium   { background: #ffe714; color: #3d3000; }
   .badge.priority-low      { background: #b3ffb3; color: #002202; }
 
+  .role-badge {
+    @apply mt-2 inline-flex w-auto max-w-fit self-start whitespace-nowrap px-2 py-0.5 text-[11px];
+  }
+
   .tabs {
     @apply mb-5 flex flex-wrap gap-2;
   }
@@ -366,6 +370,14 @@
     border: 2px solid #121c2b;
   }
 
+  .developer-token-form {
+    @apply grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center;
+  }
+
+  .developer-token-form .button {
+    @apply min-h-10 whitespace-nowrap px-3 py-2 text-sm;
+  }
+
   .summary-strip {
     @apply grid grid-cols-2 gap-3 lg:grid-cols-6;
   }
@@ -473,6 +485,10 @@
 
   .env-format-grid {
     @apply grid grid-cols-1 gap-2 sm:grid-cols-2;
+  }
+
+  .env-format-grid.compact {
+    @apply sm:grid-cols-4;
   }
 
   .env-format-option {
@@ -660,6 +676,42 @@
     @apply block min-w-0 overflow-hidden text-ellipsis whitespace-nowrap;
   }
 
+  .pending-invite-card {
+    @apply grid gap-3 bg-surface-container-low p-3;
+    border: 2px solid #121c2b;
+    border-radius: 8px;
+  }
+
+  .pending-invite-card strong {
+    @apply block min-w-0 overflow-hidden text-ellipsis whitespace-nowrap;
+  }
+
+  .pending-invite-card p {
+    @apply m-0 break-words;
+  }
+
+  .pending-invite-actions {
+    @apply flex flex-wrap justify-end gap-2 border-t-2 border-outline-variant pt-3;
+  }
+
+  .compact-actions {
+    @apply items-end gap-1;
+  }
+
+  .activity-list {
+    @apply grid gap-3;
+  }
+
+  .activity-item {
+    @apply grid gap-1 bg-surface-container-low p-3;
+    border: 2px solid #121c2b;
+    border-radius: 8px;
+  }
+
+  .activity-item p {
+    @apply m-0;
+  }
+
   .artifact-frame {
     @apply min-h-[420px] w-full bg-surface-container-lowest;
     border: 2px solid #121c2b;
@@ -696,26 +748,27 @@
   }
 
   .toast {
-    @apply fixed bottom-6 right-6 z-[9999] flex items-center gap-3 px-5 py-3 font-headline-md text-sm font-bold;
-    border: 3px solid #121c2b;
-    box-shadow: 6px 6px 0 0 #121c2b;
+    @apply fixed bottom-6 right-6 z-[9999] flex items-center gap-3 px-5 py-3 font-headline-md text-sm font-extrabold;
+    border: 4px solid #121c2b;
+    border-radius: 8px;
+    box-shadow: 8px 8px 0 0 #121c2b, 0 16px 44px rgba(18, 28, 43, 0.22);
     animation: toast-slide-in 350ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards, toast-fade-out 500ms ease 4s forwards;
     max-width: 380px;
   }
 
-  .toast-success {
+  .toast.toast-success {
     background: #62ef62;
     color: #002202;
   }
 
-  .toast-error {
+  .toast.toast-error {
     background: #ff4d4d;
     color: #3d0000;
   }
 
   .toast-icon {
     @apply flex flex-shrink-0 items-center justify-center rounded-full p-1;
-    background: rgba(255, 255, 255, 0.35);
+    background: rgba(255, 255, 255, 0.5);
     border: 2px solid #121c2b;
   }
 

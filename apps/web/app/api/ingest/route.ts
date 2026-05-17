@@ -1,4 +1,4 @@
-import { hashProjectKey } from "@/lib/crypto";
+import { hashProjectKey, hashSecret } from "@/lib/crypto";
 import { corsHeaders, isLocalDevelopmentOrigin } from "@/lib/origins";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ingestPayloadSchema } from "@snapbug/shared/schemas";
@@ -69,16 +69,19 @@ export async function POST(request: Request) {
       return json({ error: "Origin is not allowed for this project key" }, 403, headers);
     }
 
+    const developer = environment === "development" ? await validateDeveloperToken(admin, keyRow.project_id, payload.developerToken, headers) : null;
+
     const { data: report, error: reportError } = await admin
       .from("reports")
       .insert({
         project_id: keyRow.project_id,
+        created_by: developer?.userId || null,
         environment,
         type: payload.type,
         priority: payload.priority || "medium",
         title: payload.title || null,
         message: payload.message,
-        reporter_name: payload.reporterName || null,
+        reporter_name: developer?.email || payload.reporterName || null,
         page_url: payload.pageUrl,
         user_agent: payload.userAgent || null,
         browser: payload.browser || {},
@@ -93,10 +96,13 @@ export async function POST(request: Request) {
 
     await admin.from("project_keys").update({ last_used_at: new Date().toISOString() }).eq("id", keyRow.id);
 
-    const artifactErrors = await uploadArtifacts(admin, report.id, payload);
+    const artifactErrors = await uploadArtifacts(admin, report.id, payload, developer?.userId || null);
 
     return json({ ok: true, reportId: report.id, artifactErrors }, 201, headers);
   } catch (error) {
+    if (error instanceof IngestResponseError) {
+      return json(error.body, error.status, error.headers);
+    }
     return json({ error: formatUnknownError(error) }, 500, headers);
   }
 }
@@ -156,7 +162,8 @@ async function uploadArtifacts(
     screenshotDataUrl?: string;
     consoleLogs?: unknown[];
     replayEvents?: unknown[];
-  }
+  },
+  uploadedBy: string | null
 ) {
   const errors: string[] = [];
 
@@ -165,11 +172,20 @@ async function uploadArtifacts(
       const screenshot = parseDataUrl(payload.screenshotDataUrl);
       if (screenshot) {
         const extension = screenshot.contentType === "image/jpeg" ? "jpg" : "png";
-        await uploadArtifact(admin, reportId, "screenshot", `${reportId}/screenshot.${extension}`, screenshot.contentType, screenshot.bytes, {
-          displayName: "Initial screenshot",
-          isPrimary: true,
-          position: 0
-        });
+        await uploadArtifact(
+          admin,
+          reportId,
+          "screenshot",
+          `${reportId}/screenshot.${extension}`,
+          screenshot.contentType,
+          screenshot.bytes,
+          {
+            displayName: "Initial screenshot",
+            isPrimary: true,
+            position: 0,
+            uploadedBy
+          }
+        );
       }
     } catch (error) {
       errors.push(`screenshot: ${error instanceof Error ? error.message : "failed"}`);
@@ -181,7 +197,8 @@ async function uploadArtifacts(
       const bytes = Buffer.from(JSON.stringify(payload.consoleLogs, null, 2));
       await uploadArtifact(admin, reportId, "console_logs", `${reportId}/console-logs.json`, "application/json", bytes, {
         displayName: "Console logs",
-        position: 10
+        position: 10,
+        uploadedBy
       });
     } catch (error) {
       errors.push(`console_logs: ${error instanceof Error ? error.message : "failed"}`);
@@ -193,7 +210,8 @@ async function uploadArtifacts(
       const bytes = Buffer.from(JSON.stringify(payload.replayEvents));
       await uploadArtifact(admin, reportId, "replay", `${reportId}/replay.json`, "application/json", bytes, {
         displayName: "Replay events",
-        position: 20
+        position: 20,
+        uploadedBy
       });
     } catch (error) {
       errors.push(`replay: ${error instanceof Error ? error.message : "failed"}`);
@@ -219,7 +237,7 @@ async function uploadArtifact(
   storagePath: string,
   contentType: string,
   bytes: Buffer,
-  options: { displayName: string; position: number; isPrimary?: boolean }
+  options: { displayName: string; position: number; isPrimary?: boolean; uploadedBy?: string | null }
 ) {
   const { error: uploadError } = await admin.storage.from("report-artifacts").upload(storagePath, bytes, {
     contentType,
@@ -235,7 +253,61 @@ async function uploadArtifact(
     byte_size: bytes.byteLength,
     display_name: options.displayName,
     position: options.position,
-    is_primary: Boolean(options.isPrimary)
+    is_primary: Boolean(options.isPrimary),
+    uploaded_by: options.uploadedBy || null
   });
   if (insertError) throw insertError;
+}
+
+async function validateDeveloperToken(
+  admin: ReturnType<typeof createAdminClient>,
+  projectId: string,
+  token: string | undefined,
+  headers: Headers
+) {
+  if (!token) {
+    throw new IngestResponseError({ error: "Developer token is required for development reports" }, 401, headers);
+  }
+
+  const { data: tokenRow, error: tokenError } = await admin
+    .from("developer_tokens")
+    .select("id, user_id, expires_at, revoked_at")
+    .eq("token_hash", hashSecret(token))
+    .maybeSingle();
+
+  if (tokenError) throw tokenError;
+  if (!tokenRow || tokenRow.revoked_at || new Date(tokenRow.expires_at).getTime() <= Date.now()) {
+    throw new IngestResponseError({ error: "Invalid or expired developer token" }, 401, headers);
+  }
+
+  const { data: member, error: memberError } = await admin
+    .from("project_members")
+    .select("project_id")
+    .eq("project_id", projectId)
+    .eq("user_id", tokenRow.user_id)
+    .maybeSingle();
+
+  if (memberError) throw memberError;
+  if (!member) {
+    throw new IngestResponseError({ error: "Developer token user is not a member of this project" }, 403, headers);
+  }
+
+  const { data: profile, error: profileError } = await admin.from("profiles").select("email").eq("id", tokenRow.user_id).maybeSingle();
+  if (profileError) throw profileError;
+
+  await admin.from("developer_tokens").update({ last_used_at: new Date().toISOString() }).eq("id", tokenRow.id);
+  return {
+    userId: tokenRow.user_id as string,
+    email: profile?.email || null
+  };
+}
+
+class IngestResponseError extends Error {
+  constructor(
+    readonly body: unknown,
+    readonly status: number,
+    readonly headers: Headers
+  ) {
+    super("Ingest response error");
+  }
 }

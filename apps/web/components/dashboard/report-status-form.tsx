@@ -1,14 +1,22 @@
 "use client";
 
-import { updateReportAction } from "@/app/(dashboard)/actions";
 import { Button } from "@/components/ui/button";
+import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { Select } from "@/components/ui/fields";
+import { OperationToast, type OperationToastState } from "@/components/ui/operation-toast";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useRef, useState } from "react";
 
 export function ReportStatusForm({ reportId, status, priority }: { reportId: string; status: string; priority: string }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<OperationToastState>(null);
   const confirmedRef = useRef(false);
   const formRef = useRef<HTMLFormElement>(null);
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
 
   function submit(event: React.FormEvent<HTMLFormElement>) {
     if (confirmedRef.current) return;
@@ -16,15 +24,44 @@ export function ReportStatusForm({ reportId, status, priority }: { reportId: str
     setConfirmOpen(true);
   }
 
-  function confirm() {
+  async function confirm() {
     confirmedRef.current = true;
     setConfirmOpen(false);
-    formRef.current?.requestSubmit();
+    setPending(true);
+    setError(null);
+
+    const formData = new FormData(formRef.current!);
+    const response = await fetch(`/api/reports/${reportId}/status`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        status: formData.get("status"),
+        priority: formData.get("priority")
+      })
+    });
+    const body = (await response.json().catch(() => ({}))) as { error?: string };
+
+    confirmedRef.current = false;
+    setPending(false);
+
+    if (!response.ok) {
+      setError(body.error || "Could not update report");
+      setToast({ id: Date.now(), message: body.error || "Could not update report", type: "error" });
+      return;
+    }
+
+    const nextParams = new URLSearchParams(searchParams.toString());
+    nextParams.set("success", "Report updated");
+    nextParams.set("toast", Date.now().toString());
+    nextParams.delete("error");
+    router.replace(`${pathname}?${nextParams.toString()}`, { scroll: false });
+    router.refresh();
   }
 
   return (
     <>
-      <form className="stack" action={updateReportAction} onSubmit={submit} ref={formRef}>
+      <OperationToast toast={toast} />
+      <form className="stack" onSubmit={submit} ref={formRef}>
         <input type="hidden" name="reportId" value={reportId} />
         <label className="stack">
           <span className="muted">Status</span>
@@ -45,24 +82,19 @@ export function ReportStatusForm({ reportId, status, priority }: { reportId: str
             <option value="critical">Critical</option>
           </Select>
         </label>
-        <Button>Update</Button>
+        {error ? <p className="error">{error}</p> : null}
+        <Button disabled={pending}>{pending ? "Updating..." : "Update"}</Button>
       </form>
 
       {confirmOpen ? (
-        <div className="modal-backdrop" role="presentation">
-          <div aria-modal="true" className="confirm-modal" role="dialog">
-            <h2>Update report?</h2>
-            <p className="muted">This will change the report status and priority for everyone viewing this project.</p>
-            <div className="row between">
-              <Button type="button" variant="secondary" onClick={() => setConfirmOpen(false)}>
-                Cancel
-              </Button>
-              <Button type="button" onClick={confirm}>
-                Confirm update
-              </Button>
-            </div>
-          </div>
-        </div>
+        <ConfirmModal
+          confirmLabel="Confirm update"
+          description="This will change the report status and priority for everyone viewing this project."
+          onCancel={() => setConfirmOpen(false)}
+          onConfirm={confirm}
+          pending={pending}
+          title="Update report?"
+        />
       ) : null}
     </>
   );

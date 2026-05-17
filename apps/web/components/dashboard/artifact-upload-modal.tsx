@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/fields";
+import { OperationToast, type OperationToastState } from "@/components/ui/operation-toast";
 import { Upload } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -10,6 +11,7 @@ export function ArtifactUploadModal({ reportId }: { reportId: string }) {
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [toast, setToast] = useState<OperationToastState>(null);
   const router = useRouter();
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -27,15 +29,18 @@ export function ArtifactUploadModal({ reportId }: { reportId: string }) {
 
     if (!response.ok) {
       setError(body.error || "Could not upload attachment");
+      setToast({ id: Date.now(), message: body.error || "Could not upload attachment", type: "error" });
       return;
     }
 
     setOpen(false);
+    setToast({ id: Date.now(), message: "Attachment uploaded", type: "success" });
     router.refresh();
   }
 
   return (
     <>
+      <OperationToast toast={toast} />
       <Button type="button" variant="secondary" onClick={() => setOpen(true)}>
         <Upload size={16} />
         Add attachment
