@@ -108,8 +108,77 @@
   }
 
   .nav a {
-    @apply px-2 py-1 font-label-md text-label-md text-on-surface-variant transition-transform duration-150 hover:rotate-2 hover:scale-105 hover:bg-secondary-container hover:text-on-secondary-container;
+    @apply px-2 py-1 font-label-md text-label-md text-on-surface-variant hover:rotate-2 hover:scale-105 hover:bg-secondary-container hover:text-on-secondary-container;
+    border: 2px solid transparent;
     border-radius: 255px 15px 225px 15px / 15px 225px 15px 255px;
+    transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+  }
+
+  .nav a.active {
+    @apply bg-secondary-container text-on-secondary-container;
+    border-color: #121c2b;
+    box-shadow: 3px 3px 0 0 #121c2b;
+  }
+
+  /* Mobile nav */
+  .nav-desktop {
+    display: none;
+  }
+
+  .mobile-menu-btn {
+    @apply flex cursor-pointer items-center justify-center text-on-surface-variant;
+    background: transparent;
+    border: 2px solid transparent;
+    padding: 0.3rem 0.4rem;
+    border-radius: 8px;
+    transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+  }
+
+  .mobile-menu-btn:hover {
+    @apply bg-secondary-container text-on-secondary-container;
+    border-color: #121c2b;
+    box-shadow: 3px 3px 0 0 #121c2b;
+  }
+
+  .mobile-nav-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 39;
+  }
+
+  .mobile-nav-panel {
+    @apply bg-background border-b-2 border-on-surface;
+    position: fixed;
+    top: 58px;
+    left: 0;
+    right: 0;
+    z-index: 40;
+    padding: 0.75rem 1.5rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    box-shadow: 0 4px 0 0 #121c2b;
+  }
+
+  .mobile-nav-link {
+    @apply font-label-md text-label-md text-on-surface-variant;
+    display: block;
+    padding: 0.65rem 0.75rem;
+    border: 2px solid transparent;
+    border-radius: 255px 15px 225px 15px / 15px 225px 15px 255px;
+    text-decoration: none;
+    transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+  }
+
+  .mobile-nav-link:hover {
+    @apply bg-secondary-container text-on-secondary-container;
+    border-color: #121c2b;
+  }
+
+  .mobile-nav-link.active {
+    @apply bg-secondary-container text-on-secondary-container;
+    border-color: #121c2b;
+    box-shadow: 3px 3px 0 0 #121c2b;
   }
 
   .page {
@@ -817,10 +886,120 @@
 }
 
 @media (max-width: 780px) {
-  .page-header,
-  .topbar {
+  .page-header {
     align-items: flex-start;
     flex-direction: column;
     height: auto;
   }
+}
+
+.user-menu-trigger {
+  @apply flex items-center gap-2 cursor-pointer font-label-md text-label-md text-on-surface-variant;
+  background: transparent;
+  border: 2px solid transparent;
+  padding: 0.25rem 0.5rem;
+  border-radius: 255px 15px 225px 15px / 15px 225px 15px 255px;
+  transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.user-menu-trigger:hover {
+  @apply bg-secondary-container text-on-secondary-container;
+  border-color: #121c2b;
+  box-shadow: 3px 3px 0 0 #121c2b;
+}
+
+.user-avatar {
+  @apply flex items-center justify-center font-label-md text-label-md;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--on-accent, #fff);
+  font-weight: 700;
+}
+
+.user-menu-email {
+  @apply hidden;
+}
+
+@media (min-width: 640px) {
+  .user-menu-email {
+    @apply inline;
+  }
+
+  .nav-desktop {
+    display: flex;
+    gap: 0.75rem;
+  }
+
+  .mobile-menu-btn {
+    display: none;
+  }
+
+  .mobile-nav-panel {
+    display: none;
+  }
+}
+
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+.user-menu-dropdown {
+  @apply flex flex-col gap-1 border-2 border-on-surface bg-background shadow-[4px_4px_0px_0px_rgba(18,28,43,1)];
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 200px;
+  padding: 0.75rem;
+  z-index: 50;
+  border-radius: 4px;
+}
+
+.user-menu-item {
+  @apply font-label-md text-label-md text-on-surface-variant;
+  display: block;
+  padding: 0.4rem 0;
+  text-decoration: none;
+  transition: color 150ms;
+}
+
+.user-menu-item:hover {
+  @apply text-on-surface;
+}
+
+/* Invite modal */
+.invite-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.invite-modal {
+  @apply bg-background border-2 border-on-surface;
+  box-shadow: 6px 6px 0 0 rgba(18, 28, 43, 1);
+  padding: 2rem;
+  max-width: 440px;
+  width: 100%;
+  border-radius: 4px;
+}
+
+.invite-modal-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: invite-spin 0.7s linear infinite;
+}
+
+@keyframes invite-spin {
+  to { transform: rotate(360deg); }
 }

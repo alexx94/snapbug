@@ -1,4 +1,5 @@
 import { CreateProjectForm } from "@/components/dashboard/create-project-form";
+import { InviteModal } from "@/components/dashboard/invite-modal";
 import { PendingInvites } from "@/components/dashboard/pending-invites";
 import { Card, CardTitle } from "@/components/ui/card";
 import { Toast } from "@/components/ui/toast";
@@ -6,7 +7,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
 
-export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ success?: string }> }) {
+export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ success?: string; error?: string; invite?: string; token?: string }> }) {
   const query = await searchParams;
   const supabase = await createClient();
   const {
@@ -17,13 +18,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
 
   return (
     <main className="page dashboard-page">
-      <Toast success={query.success} />
+      <Toast success={query.success} error={query.error} />
       <div className="page-header dashboard-header">
         <div>
           <h1 className="page-title">Projects</h1>
           <p className="page-subtitle">Generate SDK keys, configure origins, and inspect incoming reports.</p>
         </div>
       </div>
+
+      {query.invite && query.token ? <InviteModal inviteId={query.invite} token={query.token} /> : null}
 
       <div className="projects-layout">
         <div className="stack">

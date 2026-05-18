@@ -1,6 +1,8 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+const PROTECTED_PATHS = ["/projects", "/settings", "/test-client"];
+
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
 
@@ -21,6 +23,19 @@ export async function updateSession(request: NextRequest) {
     }
   );
 
-  await supabase.auth.getClaims();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  const pathname = request.nextUrl.pathname;
+  const isProtected = PROTECTED_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"));
+
+  if (!user && isProtected) {
+    const loginUrl = new URL("/login", request.url);
+    const fullPath = pathname + request.nextUrl.search;
+    if (fullPath !== "/projects") {
+      loginUrl.searchParams.set("next", fullPath);
+    }
+    return NextResponse.redirect(loginUrl);
+  }
+
   return response;
 }

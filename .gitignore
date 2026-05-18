@@ -11,3 +11,5 @@ dist
 coverage
 dev-server.log
 dev-server.err
+supabase/.branches/
+supabase/.temp/

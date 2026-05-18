@@ -1,10 +1,15 @@
 "use client";
 
 import { SnapBug } from "@snapbug/sdk";
+import type { SnapBugWidgetPlacement } from "@snapbug/shared/types";
 import { useEffect, useMemo, useState } from "react";
+
+const PLACEMENTS: SnapBugWidgetPlacement[] = ["bottom-right", "bottom-left", "top-right", "top-left"];
 
 export function TestClient() {
   const [mode, setMode] = useState<"development" | "production">("development");
+  const [placement, setPlacement] = useState<SnapBugWidgetPlacement>("bottom-right");
+  const [captureReplay, setCaptureReplay] = useState(false);
   const [mounted, setMounted] = useState(false);
 
   const keys = useMemo(
@@ -15,7 +20,9 @@ export function TestClient() {
     []
   );
 
+  const developerToken = process.env.NEXT_PUBLIC_SNAPBUG_DEV_TOKEN;
   const activeKey = mode === "development" ? keys.development : keys.production;
+  const keyPrefix = activeKey && !activeKey.includes("replace") ? activeKey.slice(0, 10) + "..." : null;
 
   useEffect(() => {
     setMounted(true);
@@ -27,15 +34,21 @@ export function TestClient() {
     SnapBug.init({
       developmentKey: keys.development,
       productionKey: keys.production,
+      developerToken,
       environment: mode,
       apiBaseUrl: process.env.NEXT_PUBLIC_SNAPBUG_API_BASE_URL || window.location.origin,
-      captureReplay: false,
+      captureReplay,
       trigger: mode === "development" ? "widget" : "none",
+      placement,
       presentation: mode === "production" ? "modal" : "popover"
     });
 
     return () => SnapBug.destroy();
-  }, [activeKey, keys.development, keys.production, mode, mounted]);
+  }, [activeKey, captureReplay, developerToken, keys.development, keys.production, mode, mounted, placement]);
+
+  function handlePlacement(value: string) {
+    setPlacement(value as SnapBugWidgetPlacement);
+  }
 
   function generateLogs() {
     console.log("SnapBug test log", { mode, at: new Date().toISOString() });
@@ -65,11 +78,11 @@ export function TestClient() {
             </li>
             <li>
               <strong>Add keys to <code>.env.local</code></strong>
-              <pre className="code">{"NEXT_PUBLIC_SNAPBUG_DEV_KEY=pk_dev_...\nNEXT_PUBLIC_SNAPBUG_LIVE_KEY=pk_live_..."}</pre>
+              <pre className="code">{"NEXT_PUBLIC_SNAPBUG_DEV_KEY=pk_dev_...\nNEXT_PUBLIC_SNAPBUG_LIVE_KEY=pk_live_...\nNEXT_PUBLIC_SNAPBUG_DEV_TOKEN=sbdt_...  # optional, for dev attribution"}</pre>
             </li>
             <li>
               <strong>Initialize in your app</strong>
-              <pre className="code">{"import { SnapBug } from '@snapbug/sdk';\n\nSnapBug.init({\n  developmentKey: import.meta.env.VITE_SNAPBUG_DEV_KEY,\n  productionKey: import.meta.env.VITE_SNAPBUG_LIVE_KEY,\n});"}</pre>
+              <pre className="code">{"import { SnapBug } from '@snapbug/sdk';\n\nSnapBug.init({\n  developmentKey: import.meta.env.VITE_SNAPBUG_DEV_KEY,\n  productionKey: import.meta.env.VITE_SNAPBUG_LIVE_KEY,\n  developerToken: import.meta.env.VITE_SNAPBUG_DEV_TOKEN,\n  captureReplay: true,\n});"}</pre>
             </li>
             <li><strong>Restart dev server</strong> and the widget appears in dev mode.</li>
           </ol>
@@ -77,16 +90,48 @@ export function TestClient() {
 
         <div className="card stack">
           <h2 className="card-title">Live test</h2>
-          <select className="select" value={mode} onChange={(event) => setMode(event.target.value as "development" | "production")}>
-            <option value="development">Development key</option>
-            <option value="production">Production key</option>
-          </select>
-          <button className="button" type="button" onClick={() => SnapBug.open({ presentation: "modal" })}>
-            Report a problem
-          </button>
-          <button className="button secondary" type="button" onClick={generateLogs}>
-            Generate console logs
-          </button>
+
+          <div className="stack" style={{ gap: "0.5rem" }}>
+            <label className="muted" style={{ fontSize: "0.85rem" }}>Environment</label>
+            <select className="select" value={mode} onChange={(e) => setMode(e.target.value as "development" | "production")}>
+              <option value="development">Development key</option>
+              <option value="production">Production key</option>
+            </select>
+          </div>
+
+          <div className="stack" style={{ gap: "0.5rem" }}>
+            <label className="muted" style={{ fontSize: "0.85rem" }}>Widget placement</label>
+            <select className="select" value={placement} onChange={(e) => handlePlacement(e.target.value)}>
+              {PLACEMENTS.map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+          </div>
+
+          <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer" }}>
+            <input type="checkbox" checked={captureReplay} onChange={(e) => setCaptureReplay(e.target.checked)} />
+            <span className="muted" style={{ fontSize: "0.85rem" }}>Capture session replay</span>
+          </label>
+
+          {keyPrefix ? (
+            <p className="muted" style={{ fontSize: "0.8rem" }}>Active key: <code>{keyPrefix}</code>{developerToken ? " + developer token" : ""}</p>
+          ) : null}
+
+          <div className="row" style={{ gap: "0.5rem", flexWrap: "wrap" }}>
+            <button className="button" type="button" onClick={() => SnapBug.open({ presentation: "modal" })}>
+              Report a problem
+            </button>
+            <button className="button secondary" type="button" onClick={() => SnapBug.toggle()}>
+              Toggle widget
+            </button>
+            <button className="button secondary" type="button" onClick={() => SnapBug.close()}>
+              Close widget
+            </button>
+            <button className="button secondary" type="button" onClick={generateLogs}>
+              Generate console logs
+            </button>
+          </div>
+
           {!activeKey || activeKey.includes("replace") ? (
             <p className="error">Add the generated {mode === "development" ? "NEXT_PUBLIC_SNAPBUG_DEV_KEY" : "NEXT_PUBLIC_SNAPBUG_LIVE_KEY"} to .env.local.</p>
           ) : (

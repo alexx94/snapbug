@@ -38,15 +38,15 @@ export async function createProjectAction(_state: CreateProjectState, formData: 
   const name = String(formData.get("name") || "").trim();
   if (!name) return { error: "Project name is required" };
 
-  const { data: project, error: projectError } = await supabase
+  const admin = createAdminClient();
+
+  const { data: project, error: projectError } = await admin
     .from("projects")
     .insert({ owner_id: user.id, name, slug: slugify(name) })
     .select("id")
     .single();
 
   if (projectError || !project) return { error: projectError?.message || "Project creation failed" };
-
-  const admin = createAdminClient();
   const { error: memberError } = await admin
     .from("project_members")
     .insert({ project_id: project.id, user_id: user.id, role: "owner" });

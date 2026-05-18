@@ -7,7 +7,7 @@ import { login } from "./actions";
 export default async function LoginPage({
   searchParams
 }: {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; next?: string }>;
 }) {
   const params = await searchParams;
 
@@ -15,6 +15,7 @@ export default async function LoginPage({
     <main className="page" style={{ maxWidth: 460 }}>
       <Card>
         <form className="stack" action={login}>
+          {params.next ? <input type="hidden" name="next" value={params.next} /> : null}
           <div>
             <CardTitle>SnapBug login</CardTitle>
             <p className="muted">Sign in to manage projects, keys, and reports.</p>
@@ -30,7 +31,7 @@ export default async function LoginPage({
           </label>
           <Button>Login</Button>
           <p className="muted">
-            Don&apos;t have an account? <Link href="/signup" style={{ textDecoration: "underline" }}>Create account</Link>
+            Don&apos;t have an account? <Link href={params.next ? `/signup?next=${encodeURIComponent(params.next)}` : "/signup"} style={{ textDecoration: "underline" }}>Create account</Link>
           </p>
         </form>
       </Card>

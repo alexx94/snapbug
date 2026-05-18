@@ -1,9 +1,11 @@
+import { ArtifactDeleteButton } from "@/components/dashboard/artifact-delete-button";
 import { ArtifactUploadModal } from "@/components/dashboard/artifact-upload-modal";
 import { ArtifactViewer } from "@/components/dashboard/artifact-viewer";
 import { MetadataPanel } from "@/components/dashboard/metadata-panel";
 import { ReportStatusForm } from "@/components/dashboard/report-status-form";
 import { Card, CardTitle } from "@/components/ui/card";
 import { Toast } from "@/components/ui/toast";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { Download } from "lucide-react";
 import Link from "next/link";
@@ -43,6 +45,7 @@ export default async function ReportPage({
   const { reportId } = await params;
   const query = await searchParams;
   const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
 
   const { data: report } = await supabase
     .from("reports")
@@ -53,6 +56,13 @@ export default async function ReportPage({
     .single();
 
   if (!report) notFound();
+
+  const currentUserId = user?.id;
+  const admin = createAdminClient();
+  const { data: membership } = currentUserId
+    ? await admin.from("project_members").select("role").eq("project_id", report.project_id).eq("user_id", currentUserId).maybeSingle()
+    : { data: null };
+  const isOwner = membership?.role === "owner";
 
   const { data: artifacts } = await supabase
     .from("report_artifacts")
@@ -165,12 +175,21 @@ export default async function ReportPage({
                       </span>
                       <span className="muted">Uploaded by {artifact.uploader_email || "SnapBug"}</span>
                     </div>
-                    {artifact.signed_url ? (
-                      <a className="button secondary" href={artifact.signed_url} rel="noreferrer" target="_blank">
-                        <Download size={16} />
-                        Download
-                      </a>
-                    ) : null}
+                    <div className="row" style={{ gap: "0.5rem" }}>
+                      {artifact.signed_url ? (
+                        <a className="button secondary" href={artifact.signed_url} rel="noreferrer" target="_blank">
+                          <Download size={16} />
+                          Download
+                        </a>
+                      ) : null}
+                      {(artifact.uploaded_by === currentUserId || isOwner) && !artifact.is_primary ? (
+                        <ArtifactDeleteButton
+                          reportId={report.id}
+                          artifactId={artifact.id}
+                          displayName={artifact.display_name || artifact.kind}
+                        />
+                      ) : null}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -280,5 +299,6 @@ function activityLabel(event: AuditEvent) {
     return `Changed priority to ${newPriority}`;
   }
   if (event.action === "artifact.uploaded") return `Uploaded ${String(event.new_values?.display_name || "attachment")}`;
+  if (event.action === "artifact.deleted") return `Deleted ${String(event.old_values?.display_name || "attachment")}`;
   return event.action.replaceAll(".", " ").replaceAll("_", " ");
 }

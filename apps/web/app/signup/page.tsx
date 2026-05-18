@@ -7,7 +7,7 @@ import { signup } from "./actions";
 export default async function SignupPage({
   searchParams
 }: {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; next?: string }>;
 }) {
   const params = await searchParams;
 
@@ -15,6 +15,7 @@ export default async function SignupPage({
     <main className="page" style={{ maxWidth: 460 }}>
       <Card>
         <form className="stack" action={signup}>
+          {params.next ? <input type="hidden" name="next" value={params.next} /> : null}
           <div>
             <CardTitle>Create account</CardTitle>
             <p className="muted">Create a SnapBug account to start managing projects and reports.</p>
@@ -34,7 +35,7 @@ export default async function SignupPage({
           </label>
           <Button>Create account</Button>
           <p className="muted">
-            Already have an account? <Link href="/login" style={{ textDecoration: "underline" }}>Login</Link>
+            Already have an account? <Link href={params.next ? `/login?next=${encodeURIComponent(params.next)}` : "/login"} style={{ textDecoration: "underline" }}>Login</Link>
           </p>
         </form>
       </Card>

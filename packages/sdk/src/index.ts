@@ -391,7 +391,7 @@ class SnapBugClient {
   }
 
   private async captureScreenshot() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = window.devicePixelRatio || 1;
     const canvas = await html2canvas(document.documentElement, {
       useCORS: true,
       logging: false,
@@ -402,9 +402,14 @@ class SnapBugClient {
       height: window.innerHeight,
       windowWidth: window.innerWidth,
       windowHeight: window.innerHeight,
-      ignoreElements: (element) => element.hasAttribute("data-snapbug-ignore")
+      ignoreElements: (element) => element.hasAttribute("data-snapbug-ignore"),
+      onclone: (clonedDoc) => {
+        clonedDoc.querySelectorAll('img[loading="lazy"]').forEach((img) => {
+          (img as HTMLImageElement).loading = "eager";
+        });
+      }
     });
-    const maxWidth = 1600;
+    const maxWidth = 1920;
     if (canvas.width <= maxWidth) {
       return canvas.toDataURL("image/png");
     }
@@ -413,7 +418,12 @@ class SnapBugClient {
     const ratio = maxWidth / canvas.width;
     resized.width = maxWidth;
     resized.height = Math.round(canvas.height * ratio);
-    resized.getContext("2d")?.drawImage(canvas, 0, 0, resized.width, resized.height);
+    const ctx = resized.getContext("2d");
+    if (ctx) {
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(canvas, 0, 0, resized.width, resized.height);
+    }
     return resized.toDataURL("image/png");
   }
 

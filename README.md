@@ -199,6 +199,8 @@ Development mode shows the floating widget and also includes a custom `Report a 
 
 ## SDK Integration
 
+> Full SDK documentation: [`packages/sdk/README.md`](packages/sdk/README.md)
+
 The package is currently private and not published to npm. Inside this monorepo, apps consume it as a workspace package. For distribution builds:
 
 ```bash
